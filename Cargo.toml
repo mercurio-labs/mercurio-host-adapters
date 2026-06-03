@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/mercurio-python",
-    "crates/mercurio-views",
     "crates/mercurio-wasm",
 ]
 resolver = "2"
@@ -18,4 +17,3 @@ pyo3 = "0.23"
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
-

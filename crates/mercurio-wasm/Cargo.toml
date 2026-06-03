@@ -13,7 +13,7 @@ mercurio-core = { package = "mercurio-foundation", path = "../../../mercurio-fou
 mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
 mercurio-requirements = { path = "../../../mercurio-sysml/crates/mercurio-requirements" }
 mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
-mercurio-views = { path = "../mercurio-views" }
+mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }
 serde = { workspace = true }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
