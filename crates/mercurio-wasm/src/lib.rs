@@ -9,8 +9,10 @@ use mercurio_core::{
 use mercurio_kerml::{compile_kerml_text, parse_kerml};
 use mercurio_requirements::requirements_table_view;
 use mercurio_sysml::{
-    Diagnostic, SemanticCompileStatus, SourceLanguage, SysmlModule,
-    compile_sysml_text_with_context_report, parse_sysml_recovering,
+    ConcurrentSimulationScenario, ConcurrentSubjectScenario, Diagnostic, HybridSimulationScenario,
+    SemanticCompileStatus, SimulationSubject, SimulationTrace, SourceLanguage,
+    StateMachineScenarioEvent, SysmlModule, compile_sysml_text_with_context_report,
+    parse_sysml_recovering, project_state_machines, run_hybrid_simulation,
     sysml_parsed_module_assessment_facts,
 };
 use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
@@ -560,6 +562,205 @@ impl MercurioSession {
             Ok(success(serde_json::to_value(report)?, []))
         })
     }
+
+    /// Return all state machines found in the compiled document.
+    /// Each entry carries enough information for the UI to present a picker.
+    #[wasm_bindgen(js_name = listStateMachines)]
+    pub fn list_state_machines(&self) -> JsValue {
+        json_response(|| {
+            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let machines = project_state_machines(&runtime);
+            let items = machines
+                .iter()
+                .map(|m| {
+                    let initial = m
+                        .states
+                        .iter()
+                        .find(|s| s.is_initial)
+                        .map(|s| s.id.as_str());
+                    json!({
+                        "id":             m.id,
+                        "label":          m.label,
+                        "stateCount":     m.states.len(),
+                        "transitionCount": m.transitions.len(),
+                        "initialStateId": initial,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(success(serde_json::to_value(items)?, []))
+        })
+    }
+
+    /// Return candidate simulation subjects — elements that carry behaviour
+    /// (IndividualUsage / IndividualDefinition, or any typed feature).
+    #[wasm_bindgen(js_name = listSimulationSubjects)]
+    pub fn list_simulation_subjects(&self) -> JsValue {
+        json_response(|| {
+            let doc = self.merged_document()?;
+            // Prefer explicitly-individual elements; fall back to any named feature with a type.
+            let mut items: Vec<Value> = doc
+                .elements
+                .iter()
+                .filter(|e| e.kind.contains("Individual"))
+                .map(element_to_subject_json)
+                .collect();
+            if items.is_empty() {
+                items = doc
+                    .elements
+                    .iter()
+                    .filter(|e| {
+                        e.properties.contains_key("type")
+                            && e.properties.contains_key("declared_name")
+                            && !e.kind.contains("KerML")
+                            && !e.kind.contains("SysML::Systems::PartDefinition")
+                    })
+                    .take(50)
+                    .map(element_to_subject_json)
+                    .collect();
+            }
+            Ok(success(serde_json::to_value(items)?, []))
+        })
+    }
+
+    /// Run a simulation and return a `SimulationTrace`.
+    ///
+    /// `request` shape:
+    /// ```json
+    /// {
+    ///   "subjectId":     "feature.MyPkg.myPart",
+    ///   "machineId":     "MyStateMachine",
+    ///   "maxSteps":      200,
+    ///   "stepDurationS": 1.0,
+    ///   "initialValues": { "feature.MyPkg.myPart|temperature": 22.0 },
+    ///   "events":        [{ "id": "e1", "trigger": "start" }]
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = runSimulation)]
+    pub fn run_simulation(&self, request: JsValue) -> JsValue {
+        json_response(|| {
+            let req: WasmSimulationRequest = from_js(request)?;
+            let runtime = Runtime::from_document(self.merged_document()?)?;
+
+            // Convert "subject|feature" string keys to (String, String) tuples.
+            let values = req
+                .initial_values
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let (subj, feat) = k.split_once('|')?;
+                    Some(((subj.to_string(), feat.to_string()), v))
+                })
+                .collect();
+
+            let events = req
+                .events
+                .into_iter()
+                .map(|e| StateMachineScenarioEvent {
+                    id: e.id,
+                    trigger: e.trigger,
+                })
+                .collect();
+
+            let scenario = HybridSimulationScenario {
+                id: "wasm.simulation".to_string(),
+                subject: SimulationSubject {
+                    id: req.subject_id,
+                    type_id: None,
+                },
+                machine_id: req.machine_id,
+                initial_state_id: None,
+                events,
+                max_steps: req.max_steps.unwrap_or(200),
+                values,
+                step_duration_s: req.step_duration_s.unwrap_or(1.0),
+            };
+
+            let report = run_hybrid_simulation(&runtime, scenario)
+                .map_err(|e| WasmError::new("simulation", e.to_string()))?;
+            let trace: SimulationTrace = report.to_trace();
+            let completed = matches!(
+                trace.status,
+                mercurio_sysml::HybridSimulationStatus::Completed
+            );
+            Ok(Response {
+                ok: completed,
+                value: Some(
+                    serde_json::to_value(&trace)
+                        .map_err(|e| WasmError::new("serialize", e.to_string()))?,
+                ),
+                diagnostics: json!([]),
+                errors: Vec::new(),
+                metadata: metadata([
+                    ("stepCount", json!(trace.timeline.len())),
+                    ("status", json!(format!("{:?}", trace.status))),
+                ]),
+            })
+        })
+    }
+
+    /// Run a concurrent multi-subject simulation.
+    #[wasm_bindgen(js_name = runConcurrentSimulation)]
+    pub fn run_concurrent_simulation(&self, request: JsValue) -> JsValue {
+        json_response(|| {
+            let req: WasmConcurrentSimulationRequest = from_js(request)?;
+            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let subject_count = req.subjects.len();
+
+            let initial_values = req
+                .initial_values
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let (subject, feature) = key.split_once('|')?;
+                    Some(((subject.to_string(), feature.to_string()), value))
+                })
+                .collect();
+
+            let subjects = req
+                .subjects
+                .into_iter()
+                .map(|subject| ConcurrentSubjectScenario {
+                    subject_id: subject.subject_id,
+                    machine_id: subject.machine_id,
+                    initial_state_id: None,
+                    events: subject
+                        .events
+                        .into_iter()
+                        .map(|event| StateMachineScenarioEvent {
+                            id: event.id,
+                            trigger: event.trigger,
+                        })
+                        .collect(),
+                })
+                .collect();
+
+            let scenario = ConcurrentSimulationScenario {
+                id: "wasm.concurrent".to_string(),
+                subjects,
+                max_steps: req.max_steps.unwrap_or(300),
+                step_duration_s: req.step_duration_s.unwrap_or(1.0),
+                initial_values,
+            };
+
+            let trace = mercurio_sysml::run_concurrent_simulation(&runtime, scenario)
+                .map_err(|error| WasmError::new("simulation", error.to_string()))?;
+            let completed = matches!(
+                trace.status,
+                mercurio_sysml::HybridSimulationStatus::Completed
+            );
+            Ok(Response {
+                ok: completed,
+                value: Some(
+                    serde_json::to_value(&trace)
+                        .map_err(|error| WasmError::new("serialize", error.to_string()))?,
+                ),
+                diagnostics: json!([]),
+                errors: Vec::new(),
+                metadata: metadata([
+                    ("stepCount", json!(trace.timeline.len())),
+                    ("subjectCount", json!(subject_count)),
+                ]),
+            })
+        })
+    }
 }
 
 impl MercurioSession {
@@ -601,6 +802,58 @@ struct SessionSource {
     language: SourceLanguage,
     module: SysmlModule,
     document: KirDocument,
+}
+
+/// JSON-friendly simulation request (initial_values keyed as "subject|feature").
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmSimulationRequest {
+    subject_id: String,
+    machine_id: String,
+    #[serde(default)]
+    max_steps: Option<usize>,
+    #[serde(default)]
+    step_duration_s: Option<f64>,
+    #[serde(default)]
+    initial_values: BTreeMap<String, Value>,
+    #[serde(default)]
+    events: Vec<WasmSimulationEvent>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmConcurrentSimulationRequest {
+    subjects: Vec<WasmConcurrentSubject>,
+    #[serde(default)]
+    max_steps: Option<usize>,
+    #[serde(default)]
+    step_duration_s: Option<f64>,
+    #[serde(default)]
+    initial_values: BTreeMap<String, Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmConcurrentSubject {
+    subject_id: String,
+    machine_id: String,
+    #[serde(default)]
+    events: Vec<WasmSimulationEvent>,
+}
+
+#[derive(Deserialize)]
+struct WasmSimulationEvent {
+    id: String,
+    trigger: String,
+}
+
+fn element_to_subject_json(e: &mercurio_core::ir::KirElement) -> Value {
+    json!({
+        "id":    e.id,
+        "label": e.properties.get("declared_name").and_then(Value::as_str).unwrap_or(&e.id),
+        "typeId": e.properties.get("type").and_then(Value::as_str),
+        "kind":  e.kind,
+    })
 }
 
 #[derive(Default)]
