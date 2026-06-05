@@ -12,8 +12,8 @@ use mercurio_sysml::{
     ConcurrentSimulationScenario, ConcurrentSubjectScenario, Diagnostic, HybridSimulationScenario,
     SemanticCompileStatus, SimulationSubject, SimulationTrace, SourceLanguage,
     StateMachineScenarioEvent, SysmlModule, compile_sysml_text_with_context_report,
-    parse_sysml_recovering, project_state_machines, run_hybrid_simulation,
-    sysml_parsed_module_assessment_facts,
+    list_analysis_cases, parse_sysml_recovering, project_state_machines, run_analysis_case,
+    run_hybrid_simulation, sysml_parsed_module_assessment_facts,
 };
 use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
 use serde::{Deserialize, Serialize};
@@ -622,6 +622,16 @@ impl MercurioSession {
         })
     }
 
+    /// Return authored analysis cases that can be run as native scenarios.
+    #[wasm_bindgen(js_name = listAnalysisCases)]
+    pub fn list_analysis_cases(&self) -> JsValue {
+        json_response(|| {
+            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let items = list_analysis_cases(&runtime);
+            Ok(success(serde_json::to_value(items)?, []))
+        })
+    }
+
     /// Run a simulation and return a `SimulationTrace`.
     ///
     /// `request` shape:
@@ -757,6 +767,33 @@ impl MercurioSession {
                 metadata: metadata([
                     ("stepCount", json!(trace.timeline.len())),
                     ("subjectCount", json!(subject_count)),
+                ]),
+            })
+        })
+    }
+
+    /// Run an authored AnalysisCaseDefinition by ID and return a SimulationTrace.
+    #[wasm_bindgen(js_name = runAnalysisCase)]
+    pub fn run_analysis_case(&self, analysis_case_id: String) -> JsValue {
+        json_response(|| {
+            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let trace = run_analysis_case(&runtime, &analysis_case_id)
+                .map_err(|error| WasmError::new("simulation", error.to_string()))?;
+            let completed = matches!(
+                trace.status,
+                mercurio_sysml::HybridSimulationStatus::Completed
+            );
+            Ok(Response {
+                ok: completed,
+                value: Some(
+                    serde_json::to_value(&trace)
+                        .map_err(|error| WasmError::new("serialize", error.to_string()))?,
+                ),
+                diagnostics: json!([]),
+                errors: Vec::new(),
+                metadata: metadata([
+                    ("stepCount", json!(trace.timeline.len())),
+                    ("analysisCaseId", json!(analysis_case_id)),
                 ]),
             })
         })
