@@ -11,7 +11,7 @@ from .models import (
     StateData,
     TraceChannel,
 )
-from .runtime import ModelRuntime
+from .runtime import ModelRuntime, RawWorkspace
 from .workspace import MercurioWorkspace
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "MercurioWorkspace",
     "ModelRuntime",
     "PartRef",
+    "RawWorkspace",
     "SimulationTrace",
     "StateData",
     "TraceChannel",
@@ -46,8 +47,7 @@ def open(
     """
     backend = Mercurio.launch(executable=executable, timeout=timeout)
     try:
-        workspace = backend.open_workspace(path)
-        workspace.compile_project(".")
+        workspace = backend.open_workspace(path, mode="compiled")
     except Exception:
         backend.close()
         raise

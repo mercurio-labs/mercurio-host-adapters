@@ -185,14 +185,31 @@ class SimulationTrace:
         return ChannelData(channel_id=channel_id, times=times, values=values)
 
     def states(self, subject_id: str) -> StateData:
-        """Return active-state sequence for one subject."""
+        """Return active-state sequence for one subject.
+
+        subject_id may be a short suffix (e.g. 'bed') or the full KIR id
+        (e.g. 'subject.VoronTrident350.PrintSequence.bed'). Short names are
+        matched against the last segment of each key in the trace.
+        """
         times: list[float] = []
         states: list[list[str]] = []
         for entry in self._timeline:
-            subject_states = entry.get("states", {}).get(subject_id)
-            if subject_states is not None:
+            raw_states: dict = entry.get("states", {})
+            matched: list[str] | None = None
+            # exact match first
+            if subject_id in raw_states:
+                matched = raw_states[subject_id]
+            else:
+                # suffix match: "bed" matches "subject.VoronTrident350.PrintSequence.bed"
+                for key, value in raw_states.items():
+                    if key == subject_id or key.endswith(f".{subject_id}"):
+                        matched = value
+                        break
+            if matched is not None:
                 times.append(float(entry.get("t", 0.0)))
-                states.append(list(subject_states))
+                # strip qualified prefixes from state names for readability
+                short_states = [s.rsplit(".", 1)[-1] for s in matched]
+                states.append(short_states)
         return StateData(subject_id=subject_id, times=times, states=states)
 
     @property
@@ -211,6 +228,19 @@ class PartRef:
     parent: "PartRef | None"
     depth: int
     _properties: JsonObject
+
+    @classmethod
+    def from_json(cls, data: JsonObject, parent_lookup: "dict[str, PartRef]") -> "PartRef":
+        parent_id = data.get("parentId")
+        return cls(
+            id=str(data["id"]),
+            name=str(data["name"]),
+            kind=str(data.get("kind", "")),
+            element_kind=str(data.get("elementKind", "")),
+            parent=parent_lookup.get(parent_id) if parent_id else None,
+            depth=int(data.get("depth", 0)),
+            _properties=data.get("attributes") or {},
+        )
 
     def attr(self, name: str, default: Any = None) -> Any:
         """Read an attribute value from model properties."""

@@ -11,7 +11,9 @@ from mercurio import (
     AnalysisCaseInfo,
     Mercurio,
     MercurioBackendError,
+    ModelRuntime,
     PartRef,
+    RawWorkspace,
     SimulationTrace,
 )
 
@@ -63,6 +65,31 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                     ],
                     "edges": [],
                 }
+            )
+            return
+        if parsed.path.endswith("/parts"):
+            self.requests.append({"method": "GET", "path": parsed.path})
+            self.write_json(
+                [
+                    {
+                        "id": "type.Printer",
+                        "name": "printer",
+                        "kind": "VoronPrinter",
+                        "elementKind": "Model::Systems::PartDefinition",
+                        "parentId": None,
+                        "depth": 0,
+                        "attributes": {},
+                    },
+                    {
+                        "id": "type.Printer.bed",
+                        "name": "bed",
+                        "kind": "HeatedBed",
+                        "elementKind": "Model::Parts::PartUsage",
+                        "parentId": "type.Printer",
+                        "depth": 1,
+                        "attributes": {"temperature": 22.0, "heatRate": 2.3},
+                    },
+                ]
             )
             return
         if parsed.path.endswith("/simulation/analysis-cases"):
@@ -331,13 +358,51 @@ class ClientTests(unittest.TestCase):
         self.assertIn("temperature", child.attrs())
         self.assertIn("heatRate", child.attrs())
 
-    def test_workspace_parts_from_graph(self) -> None:
+    def test_workspace_parts_uses_parts_endpoint(self) -> None:
         workspace = self.backend.open_workspace("C:/models/demo")
         parts = workspace.parts()
-        self.assertEqual([part.name for part in parts], ["printer", "bed"])
+        self.assertEqual(
+            FakeMercurioHandler.requests[-1]["path"],
+            "/api/workspaces/ws_0000000000000001/parts",
+        )
+        self.assertEqual([p.name for p in parts], ["printer", "bed"])
         self.assertEqual(parts[1].parent, parts[0])
         self.assertEqual(parts[1].depth, 1)
         self.assertEqual(parts[1].attr("temperature"), 22.0)
+        self.assertEqual(parts[1].attr("missing", 99), 99)
+
+    def test_model_runtime_part_finder(self) -> None:
+        workspace = self.backend.open_workspace("C:/models/demo")
+        rt = ModelRuntime.__new__(ModelRuntime)
+        rt._backend = self.backend
+        rt._workspace = workspace
+        from mercurio.runtime import RawWorkspace as _RW
+        rt.raw = _RW(workspace)
+
+        bed = rt.part("bed")
+        self.assertEqual(bed.name, "bed")
+        self.assertEqual(bed.attr("temperature"), 22.0)
+
+        printer = rt.part("type.Printer")
+        self.assertEqual(printer.name, "printer")
+
+        with self.assertRaises(KeyError):
+            rt.part("nonexistent")
+
+    def test_model_runtime_raw_delegates(self) -> None:
+        workspace = self.backend.open_workspace("C:/models/demo")
+        rt = ModelRuntime.__new__(ModelRuntime)
+        rt._backend = self.backend
+        rt._workspace = workspace
+        from mercurio.runtime import RawWorkspace as _RW
+        rt.raw = _RW(workspace)
+
+        graph = rt.raw.graph()
+        self.assertIn("nodes", graph)
+        self.assertEqual(
+            FakeMercurioHandler.requests[-1]["path"],
+            "/api/workspaces/ws_0000000000000001/graph",
+        )
 
 
 if __name__ == "__main__":
