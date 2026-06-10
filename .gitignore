@@ -1,2 +1,5 @@
 target/
 
+/.idea/
+python/*.egg-info/
+python/**/__pycache__/
