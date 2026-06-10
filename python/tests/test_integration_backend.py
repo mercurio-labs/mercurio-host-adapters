@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mercurio import Mercurio
+from mercurio.backend import Mercurio
 
 
 class BackendIntegrationTests(unittest.TestCase):

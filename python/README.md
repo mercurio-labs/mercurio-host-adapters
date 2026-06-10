@@ -1,20 +1,20 @@
 # Mercurio Python SDK
 
-This package is a thin Python client for the Mercurio local HTTP backend.
+This package is a typed Python client for Mercurio models.
 
 ```python
-from mercurio import Mercurio
+import mercurio
 
-with Mercurio.launch() as backend:
-    workspace = backend.open_workspace("C:/models/demo")
-    result = workspace.compile_project()
-    graph = workspace.graph()
+with mercurio.open("C:/models/demo") as model:
+    bed = model.part("bed")
+    trace = model.run_analysis("PrintSequence")
+    graph = model.raw.graph()
 ```
 
 Attach to an already-running backend:
 
 ```python
-from mercurio import Mercurio
+from mercurio.backend import Mercurio
 
 backend = Mercurio.connect("http://127.0.0.1:49152")
 workspace = backend.open_workspace("C:/models/demo")

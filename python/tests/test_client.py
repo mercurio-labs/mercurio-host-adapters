@@ -7,15 +7,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from mercurio import (
-    AnalysisCaseInfo,
-    Mercurio,
-    MercurioBackendError,
-    ModelRuntime,
-    PartRef,
-    RawWorkspace,
-    SimulationTrace,
-)
+from mercurio.backend import Mercurio
+from mercurio.errors import MercurioBackendError
+from mercurio.models import AnalysisCaseInfo, PartRef, SimulationTrace
+from mercurio.runtime import Model, RawWorkspace
 
 
 class FakeMercurioHandler(BaseHTTPRequestHandler):
@@ -373,7 +368,7 @@ class ClientTests(unittest.TestCase):
 
     def test_model_runtime_part_finder(self) -> None:
         workspace = self.backend.open_workspace("C:/models/demo")
-        rt = ModelRuntime.__new__(ModelRuntime)
+        rt = Model.__new__(Model)
         rt._backend = self.backend
         rt._workspace = workspace
         from mercurio.runtime import RawWorkspace as _RW
@@ -391,7 +386,7 @@ class ClientTests(unittest.TestCase):
 
     def test_model_runtime_raw_delegates(self) -> None:
         workspace = self.backend.open_workspace("C:/models/demo")
-        rt = ModelRuntime.__new__(ModelRuntime)
+        rt = Model.__new__(Model)
         rt._backend = self.backend
         rt._workspace = workspace
         from mercurio.runtime import RawWorkspace as _RW

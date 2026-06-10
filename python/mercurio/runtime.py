@@ -21,7 +21,7 @@ class RawWorkspace:
         return self._workspace.element(element_id)
 
 
-class ModelRuntime:
+class Model:
     """
     Single entry point for model inspection and simulation.
 
@@ -36,10 +36,6 @@ class ModelRuntime:
         self._backend = backend
         self._workspace = workspace
         self.raw = RawWorkspace(workspace)
-
-    @property
-    def workspace(self) -> MercurioWorkspace:
-        return self._workspace
 
     def parts(self) -> list[PartRef]:
         return self._workspace.parts()
@@ -61,8 +57,11 @@ class ModelRuntime:
         self._workspace.close()
         self._backend.close()
 
-    def __enter__(self) -> "ModelRuntime":
+    def __enter__(self) -> "Model":
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
+
+
+ModelRuntime = Model

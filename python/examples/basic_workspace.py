@@ -1,11 +1,9 @@
-from mercurio import Mercurio
+import mercurio
 
 
 def main() -> None:
-    with Mercurio.launch() as backend:
-        workspace = backend.open_workspace("examples/src/examples/Camera Example")
-        result = workspace.compile_project()
-        print(result)
+    with mercurio.open("examples/src/examples/Camera Example") as model:
+        print(model.parts())
 
 
 if __name__ == "__main__":
