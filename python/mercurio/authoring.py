@@ -29,6 +29,13 @@ class ModelBuilder:
     def in_package(self, name: str) -> "ModelBuilder":
         self._inner.add_package(self._default_file, name)
         self._default_package = name
+        # bring standard library namespaces into scope inside the package
+        for ns in (
+            "ISQBase", "ISQSpaceTime", "ISQMechanics",
+            "ISQThermodynamics", "ISQElectromagnetism",
+            "SI", "ScalarValues",
+        ):
+            self._inner.add_import(self._default_file, f"{ns}::*", name)
         return self
 
     def add(self, element: "_Declaration") -> "ModelBuilder":
@@ -64,6 +71,11 @@ class _Declaration:
         self._multiplicity: str | None = None
         self._direction: str | None = None
         self._abstract = False
+
+    @property
+    def qualified_name(self) -> str:
+        """Allow _ref() to resolve a definition or usage by its declared name."""
+        return self.name
 
     def specializes(self, target: Any):
         self._specializes.append(_ref(target))

@@ -599,6 +599,20 @@ impl PyModelBuilder {
         })
     }
 
+    #[pyo3(signature = (target_file, path, package_name=None))]
+    fn add_import(
+        &mut self,
+        target_file: String,
+        path: String,
+        package_name: Option<String>,
+    ) -> PyResult<PyWriteBackResult> {
+        self.apply_and_write_back(Mutation::AddImport {
+            target_file,
+            package_name: package_name.as_deref().map(qname),
+            path: qname(&path),
+        })
+    }
+
     #[pyo3(signature = (container, keyword, name, specializes=None))]
     fn add_definition(
         &mut self,
