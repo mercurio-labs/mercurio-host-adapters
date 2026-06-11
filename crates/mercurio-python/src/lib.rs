@@ -10,8 +10,7 @@ use mercurio_core::{
     generate_python_wrappers,
 };
 use mercurio_sysml::{
-    SysmlModelForkExt, compile_sysml_text, default_sysml_library_path,
-    load_authoring_project_from_sysml,
+    SysmlModelForkExt, compile_sysml_text, load_authoring_project_from_sysml, load_sysml_baseline,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -752,9 +751,7 @@ impl PyModelBuilder {
 
 fn default_stdlib_document() -> PyResult<&'static KirDocument> {
     DEFAULT_STDLIB_DOCUMENT
-        .get_or_init(|| {
-            KirDocument::from_path(&default_sysml_library_path()).map_err(|err| err.to_string())
-        })
+        .get_or_init(|| load_sysml_baseline().map_err(|err| err.to_string()))
         .as_ref()
         .map_err(|err| PyRuntimeError::new_err(err.clone()))
 }
@@ -772,6 +769,15 @@ fn py_semantic_model(document: KirDocument) -> PyResult<PySemanticModel> {
 
 #[pymodule]
 fn mercurio_core_native(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_module(module)
+}
+
+#[pymodule]
+fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_module(module)
+}
+
+fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyModelBuilder>()?;
     module.add_class::<PyWriteBackResult>()?;
     module.add_class::<PySemanticModel>()?;

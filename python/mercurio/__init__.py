@@ -4,10 +4,19 @@ from .runtime import Model
 
 __all__ = [
     "Model",
+    "ModelBuilder",
     "open",
 ]
 
 __version__ = "0.1.0"
+
+
+def __getattr__(name: str):
+    if name == "ModelBuilder":
+        from .authoring import ModelBuilder
+
+        return ModelBuilder
+    raise AttributeError(name)
 
 
 def open(
@@ -17,9 +26,19 @@ def open(
     timeout: float = 60.0,
 ) -> Model:
     """
-    Launch a local Mercurio backend, open *path*, compile it, and return a
-    typed model. Use as a context manager to close the backend process.
+    Open *path*, compile it, and return a typed model. Native in-process
+    bindings are used when available; the HTTP sidecar remains as fallback.
     """
+    try:
+        from mercurio._core import PyWorkspace as _Workspace
+    except ImportError:
+        _Workspace = None
+    except AttributeError:
+        _Workspace = None
+
+    if _Workspace is not None and executable is None:
+        return Model.from_native(_Workspace.open(path))
+
     from .backend import Mercurio
 
     backend = Mercurio.launch(executable=executable, timeout=timeout)
