@@ -23,6 +23,35 @@ class VersionInfo:
 
 
 @dataclass(frozen=True)
+class SysmlReleaseInfo:
+    release: str | None
+    selector: str
+    profile_id: str
+    status: str
+    sysml_version: str
+    pilot_release_tag: str | None
+    pilot_implementation_version: str | None
+    stdlib_locator: str
+    python_wrapper_module: str | None
+    aliases: list[str]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "SysmlReleaseInfo":
+        return cls(
+            release=data.get("release"),
+            selector=str(data["selector"]),
+            profile_id=str(data["profileId"]),
+            status=str(data["status"]),
+            sysml_version=str(data["sysmlVersion"]),
+            pilot_release_tag=data.get("pilotReleaseTag"),
+            pilot_implementation_version=data.get("pilotImplementationVersion"),
+            stdlib_locator=str(data["stdlibLocator"]),
+            python_wrapper_module=data.get("pythonWrapperModule"),
+            aliases=[str(alias) for alias in data.get("aliases", [])],
+        )
+
+
+@dataclass(frozen=True)
 class BackendStartupInfo:
     url: str
     pid: int

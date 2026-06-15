@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .errors import MercurioBackendError
-from .models import JsonObject, ProjectInfo, VersionInfo
+from .models import JsonObject, ProjectInfo, SysmlReleaseInfo, VersionInfo
 
 
 class MercurioClient:
@@ -22,6 +22,13 @@ class MercurioClient:
 
     def version(self) -> VersionInfo:
         return VersionInfo.from_json(self.get("/api/version"))
+
+    def list_sysml_releases(self) -> list[SysmlReleaseInfo]:
+        payload = self.get("/api/releases/sysml")
+        return [
+            SysmlReleaseInfo.from_json(item)
+            for item in payload.get("releases", [])
+        ]
 
     def open_project(self, path: str, *, mode: str = "lazy") -> ProjectInfo:
         return ProjectInfo.from_open_json(
