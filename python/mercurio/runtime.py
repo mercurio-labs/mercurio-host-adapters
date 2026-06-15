@@ -102,6 +102,14 @@ class Model:
             return workspace.run_analysis(case_id)
         return self._project.run_analysis(case_id)
 
+    def semantic_snapshot_json(self) -> str:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return workspace.compile().semantic_snapshot_json()
+        raise RuntimeError(
+            "semantic snapshots require the native workspace; open without an HTTP sidecar executable"
+        )
+
     def close(self) -> None:
         if getattr(self, "_workspace", None) is not None:
             return
