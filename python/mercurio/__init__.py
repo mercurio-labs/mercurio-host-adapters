@@ -1,5 +1,7 @@
 """Public Python API for opening and inspecting Mercurio models."""
 
+import os as _os
+
 from .runtime import Model
 from .session import (
     AnalysisQuery,
@@ -15,10 +17,13 @@ from .session import (
     Variant,
     VariantBaseChangedError,
 )
+from .lab import LabModel, parameter_sweep, batch_run
+from . import extensions
 
 __all__ = [
     "AnalysisQuery",
     "CompiledModel",
+    "LabModel",
     "Model",
     "PartDefRef",
     "PartUsageRef",
@@ -30,8 +35,12 @@ __all__ = [
     "TradeStudy",
     "Variant",
     "VariantBaseChangedError",
+    "batch_run",
+    "extensions",
+    "fork",
     "open",
     "open_project",
+    "parameter_sweep",
 ]
 
 __version__ = "0.1.0"
@@ -46,15 +55,24 @@ def __getattr__(name: str):
 
 
 def open(
-    path: str,
+    path: str | None = None,
     *,
     executable: str | None = None,
     timeout: float = 60.0,
-) -> Model:
+) -> "Model | LabModel":
+    """Open a model.
+
+    In the Lab kernel context (``MERCURIO_LAB_KERNEL=1``), calling
+    ``open()`` with no path returns a :class:`LabModel` backed by the
+    active workspace.  Outside the Lab, *path* is required.
     """
-    Open *path*, compile it, and return a typed model. Native in-process
-    bindings are used when available; the HTTP sidecar remains as fallback.
-    """
+    if _os.environ.get("MERCURIO_LAB_KERNEL") == "1" and path is None:
+        from .lab import open_lab
+        return open_lab()
+
+    if path is None:
+        raise TypeError("path is required outside the Lab kernel context")
+
     try:
         from mercurio._core import PyWorkspace as _Workspace
     except ImportError:
@@ -74,6 +92,11 @@ def open(
         backend.close()
         raise
     return Model(backend, project)
+
+
+def fork(model: LabModel, label: str, **params: object) -> LabModel:
+    """Convenience wrapper for :meth:`LabModel.fork`."""
+    return model.fork(label, **params)
 
 
 def open_project(

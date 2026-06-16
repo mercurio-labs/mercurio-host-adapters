@@ -9,7 +9,8 @@ import unittest
 class FakeNativeModelBuilder:
     instances: list["FakeNativeModelBuilder"] = []
 
-    def __init__(self) -> None:
+    def __init__(self, validate_each_mutation: bool = True) -> None:
+        self.validate_each_mutation = validate_each_mutation
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         FakeNativeModelBuilder.instances.append(self)
 
@@ -134,6 +135,12 @@ class AuthoringCreateTests(unittest.TestCase):
             ("set_attribute", ("Demo.Vehicle", "isAbstract", True)),
             native.calls,
         )
+
+    def test_model_builder_forwards_validation_mode(self) -> None:
+        self.authoring.ModelBuilder(validate_each_mutation=False)
+
+        native = FakeNativeModelBuilder.instances[-1]
+        self.assertFalse(native.validate_each_mutation)
 
     def test_in_package_can_skip_stdlib_imports(self) -> None:
         builder = self.authoring.ModelBuilder()

@@ -51,8 +51,8 @@ def _ref(value: Any) -> str:
 
 
 class ModelBuilder:
-    def __init__(self) -> None:
-        self._inner = _NativeModelBuilder()
+    def __init__(self, *, validate_each_mutation: bool = True) -> None:
+        self._inner = _NativeModelBuilder(validate_each_mutation)
         self._default_package: str | None = None
         self._default_file = "model.sysml"
         self._project_root: Path | None = None

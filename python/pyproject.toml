@@ -15,9 +15,10 @@ authors = [
 
 [project.optional-dependencies]
 test = []
+lab = ["matplotlib", "numpy"]
 
 [tool.setuptools]
-packages = ["mercurio", "mercurio_capability"]
+packages = ["mercurio", "mercurio.extensions", "mercurio_capability"]
 
 [tool.setuptools.package-data]
 mercurio = ["*.pyi", "py.typed"]

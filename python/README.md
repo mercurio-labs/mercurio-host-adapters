@@ -123,6 +123,31 @@ with mercurio.open("C:/models/demo") as model:
     parts = model.parts()
 ```
 
+## Performance Baselines
+
+Python performance baselines are opt-in so normal unit tests stay stable:
+
+```powershell
+$env:MERCURIO_RUN_PERF_BASELINES = "1"
+python -m pytest tests/test_performance_baselines.py -q -s
+```
+
+The default targets are intentionally aggressive for interactive use:
+
+| Baseline | Target |
+|----------|--------|
+| small-model authoring | <= 100 ms |
+| small-model loading | <= 200 ms |
+| small-model editing | <= 100 ms |
+| small-model variant clone | <= 100 ms |
+
+Override a target when collecting exploratory numbers:
+
+```powershell
+$env:MERCURIO_PERF_AUTHOR_SMALL_MODEL_MS = "250"
+$env:MERCURIO_PERF_ITERATIONS = "5"
+```
+
 Attach to an already-running backend:
 
 ```python
