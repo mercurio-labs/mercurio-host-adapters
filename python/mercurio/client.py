@@ -30,6 +30,12 @@ class MercurioClient:
             for item in payload.get("releases", [])
         ]
 
+    def resolve_sysml_release(self, selector: str) -> SysmlReleaseInfo:
+        for release in self.list_sysml_releases():
+            if release.matches(selector):
+                return release
+        raise ValueError(f"unknown SysML release selector: {selector}")
+
     def open_project(self, path: str, *, mode: str = "lazy") -> ProjectInfo:
         return ProjectInfo.from_open_json(
             self.post("/api/workspaces", {"path": path, "mode": mode})
