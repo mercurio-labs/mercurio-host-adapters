@@ -30,6 +30,26 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                 {"service": "mercurio-foundation", "version": "0.1.0", "status": "ok"}
             )
             return
+        if parsed.path == "/api/releases/sysml":
+            self.write_json(
+                {
+                    "releases": [
+                        {
+                            "release": "2026-01",
+                            "selector": "2026-01",
+                            "profileId": "sysml-2.0-metamodel-0.57.0",
+                            "status": "latest",
+                            "sysmlVersion": "2.0",
+                            "pilotReleaseTag": "2026-01",
+                            "pilotImplementationVersion": "0.57.0",
+                            "stdlibLocator": "file:stdlib/stdlib.full.kir.json",
+                            "pythonWrapperModule": "mercurio_sysml_2_0",
+                            "aliases": ["0.57.0", "pilot-0.57.0"],
+                        }
+                    ]
+                }
+            )
+            return
         if parsed.path == "/api/workspaces":
             self.write_json(list(self.workspaces.values()))
             return
@@ -224,6 +244,17 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(version.api_version, 1)
         project = self.backend.open_project("C:/models/demo")
         self.assertEqual(project.project_id, "ws_0000000000000001")
+
+    def test_sysml_release_catalog(self) -> None:
+        releases = self.backend.list_sysml_releases()
+
+        self.assertEqual(releases[0].release, "2026-01")
+        self.assertEqual(releases[0].selector, "2026-01")
+        self.assertEqual(releases[0].pilot_release_tag, "2026-01")
+        self.assertEqual(releases[0].pilot_implementation_version, "0.57.0")
+        self.assertEqual(releases[0].profile_id, "sysml-2.0-metamodel-0.57.0")
+        self.assertIn("0.57.0", releases[0].aliases)
+        self.assertIn("pilot-0.57.0", releases[0].aliases)
 
     def test_compile_project_preview_shapes_staged_files(self) -> None:
         project = self.backend.open_project("C:/models/demo")

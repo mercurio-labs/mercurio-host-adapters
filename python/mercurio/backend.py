@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .client import MercurioClient
-from .models import VersionInfo
+from .models import SysmlReleaseInfo, VersionInfo
 from .process import BackendProcess, launch_backend
 from .project import MercurioProject
 
@@ -61,6 +61,9 @@ class Mercurio:
 
     def version(self) -> VersionInfo:
         return self.client.version()
+
+    def list_sysml_releases(self) -> list[SysmlReleaseInfo]:
+        return self.client.list_sysml_releases()
 
     def open_project(self, path: str, *, mode: str = "lazy") -> MercurioProject:
         return MercurioProject(self.client, self.client.open_project(path, mode=mode))
