@@ -50,6 +50,14 @@ class SysmlReleaseInfo:
             aliases=[str(alias) for alias in data.get("aliases", [])],
         )
 
+    def matches(self, selector: str) -> bool:
+        return selector in {
+            self.selector,
+            self.profile_id,
+            *(value for value in [self.release, self.pilot_release_tag] if value),
+            *self.aliases,
+        }
+
 
 @dataclass(frozen=True)
 class BackendStartupInfo:

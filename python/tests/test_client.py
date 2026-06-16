@@ -45,6 +45,18 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                             "stdlibLocator": "file:stdlib/stdlib.full.kir.json",
                             "pythonWrapperModule": "mercurio_sysml_2_0",
                             "aliases": ["0.57.0", "pilot-0.57.0"],
+                        },
+                        {
+                            "release": "2026-04",
+                            "selector": "2026-04",
+                            "profileId": "sysml-2.0-pilot-2026-04",
+                            "status": "supported",
+                            "sysmlVersion": "2.0.0",
+                            "pilotReleaseTag": "2026-04",
+                            "pilotImplementationVersion": "2026-04",
+                            "stdlibLocator": "file:stdlib/stdlib.full.kir.json",
+                            "pythonWrapperModule": "mercurio_sysml_2_0",
+                            "aliases": ["pilot-2026-04"],
                         }
                     ]
                 }
@@ -255,6 +267,22 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(releases[0].profile_id, "sysml-2.0-metamodel-0.57.0")
         self.assertIn("0.57.0", releases[0].aliases)
         self.assertIn("pilot-0.57.0", releases[0].aliases)
+        self.assertEqual(releases[1].release, "2026-04")
+        self.assertEqual(releases[1].selector, "2026-04")
+        self.assertEqual(releases[1].profile_id, "sysml-2.0-pilot-2026-04")
+        self.assertIn("pilot-2026-04", releases[1].aliases)
+
+    def test_sysml_release_selector_resolution(self) -> None:
+        by_selector = self.backend.resolve_sysml_release("2026-04")
+        by_alias = self.backend.resolve_sysml_release("pilot-2026-04")
+        by_profile = self.backend.resolve_sysml_release("sysml-2.0-pilot-2026-04")
+
+        self.assertEqual(by_selector.profile_id, "sysml-2.0-pilot-2026-04")
+        self.assertEqual(by_alias.profile_id, by_selector.profile_id)
+        self.assertEqual(by_profile.profile_id, by_selector.profile_id)
+
+        with self.assertRaisesRegex(ValueError, "unknown SysML release selector"):
+            self.backend.resolve_sysml_release("2025-99")
 
     def test_compile_project_preview_shapes_staged_files(self) -> None:
         project = self.backend.open_project("C:/models/demo")

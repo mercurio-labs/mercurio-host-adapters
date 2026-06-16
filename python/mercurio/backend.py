@@ -65,6 +65,9 @@ class Mercurio:
     def list_sysml_releases(self) -> list[SysmlReleaseInfo]:
         return self.client.list_sysml_releases()
 
+    def resolve_sysml_release(self, selector: str) -> SysmlReleaseInfo:
+        return self.client.resolve_sysml_release(selector)
+
     def open_project(self, path: str, *, mode: str = "lazy") -> MercurioProject:
         return MercurioProject(self.client, self.client.open_project(path, mode=mode))
 
