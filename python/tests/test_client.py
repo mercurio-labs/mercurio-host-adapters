@@ -36,15 +36,15 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                     "releases": [
                         {
                             "release": "2026-01",
-                            "selector": "0.57.0",
+                            "selector": "2026-01",
                             "profileId": "sysml-2.0-metamodel-0.57.0",
                             "status": "latest",
                             "sysmlVersion": "2.0",
-                            "pilotReleaseTag": "0.57.0",
+                            "pilotReleaseTag": "2026-01",
                             "pilotImplementationVersion": "0.57.0",
                             "stdlibLocator": "file:stdlib/stdlib.full.kir.json",
                             "pythonWrapperModule": "mercurio_sysml_2_0",
-                            "aliases": ["2026-01", "pilot-0.57.0"],
+                            "aliases": ["0.57.0", "pilot-0.57.0"],
                         }
                     ]
                 }
@@ -249,7 +249,11 @@ class ClientTests(unittest.TestCase):
         releases = self.backend.list_sysml_releases()
 
         self.assertEqual(releases[0].release, "2026-01")
+        self.assertEqual(releases[0].selector, "2026-01")
+        self.assertEqual(releases[0].pilot_release_tag, "2026-01")
+        self.assertEqual(releases[0].pilot_implementation_version, "0.57.0")
         self.assertEqual(releases[0].profile_id, "sysml-2.0-metamodel-0.57.0")
+        self.assertIn("0.57.0", releases[0].aliases)
         self.assertIn("pilot-0.57.0", releases[0].aliases)
 
     def test_compile_project_preview_shapes_staged_files(self) -> None:
