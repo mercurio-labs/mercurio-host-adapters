@@ -1,10 +1,37 @@
 """Public Python API for opening and inspecting Mercurio models."""
 
 from .runtime import Model
+from .session import (
+    AnalysisQuery,
+    CompiledModel,
+    PartDefRef,
+    PartUsageRef,
+    ProjectSession,
+    SemanticRef,
+    SimulationConfiguration,
+    SmallEdit,
+    StaleSemanticRefError,
+    TradeStudy,
+    Variant,
+    VariantBaseChangedError,
+)
 
 __all__ = [
+    "AnalysisQuery",
+    "CompiledModel",
     "Model",
+    "PartDefRef",
+    "PartUsageRef",
+    "ProjectSession",
+    "SemanticRef",
+    "SimulationConfiguration",
+    "SmallEdit",
+    "StaleSemanticRefError",
+    "TradeStudy",
+    "Variant",
+    "VariantBaseChangedError",
     "open",
+    "open_project",
 ]
 
 __version__ = "0.1.0"
@@ -47,3 +74,12 @@ def open(
         backend.close()
         raise
     return Model(backend, project)
+
+
+def open_project(
+    path: str,
+    *,
+    validate: bool = True,
+) -> ProjectSession:
+    """Open a mutable, source-backed project session."""
+    return ProjectSession.open(path, validate=validate)

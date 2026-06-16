@@ -11,6 +11,118 @@ with mercurio.open("C:/models/demo") as model:
     graph = model.raw.graph()
 ```
 
+## Source-backed Project Sessions
+
+For authoring, small edits, semantic queries, variants, and future simulation
+configuration, use a mutable project session and compile immutable semantic
+snapshots from it:
+
+```python
+import mercurio
+from mercurio.authoring import PartUsage
+
+project = mercurio.open_project("C:/models/vehicle/.project.json")
+
+decl = PartUsage("engine").typed("Engine")
+project.add(decl)
+
+model = project.compile()
+engine = model.resolve(decl)
+```
+
+`project` is mutable and source-backed. `model` is an immutable compiled
+snapshot with a stable revision hash. `engine` is an immutable semantic ref into
+that one snapshot.
+
+Small edits are routed through the project session, even when the target came
+from a semantic ref:
+
+```python
+project.edit(engine).rename("motor")
+
+model2 = project.compile()
+motor = model2.part_usage("motor")
+```
+
+The old `engine` ref remains tied to the old model revision. Recompile and
+resolve again after edits.
+
+If source changes after a ref was compiled, using that stale ref for another
+edit raises `StaleSemanticRefError`. This keeps semantic refs as immutable facts
+instead of live mutable handles.
+
+Semantic refs support analysis-style traversal and queries:
+
+```python
+vehicle = model.part_def("Vehicle")
+subtypes = vehicle.subtypes(transitive=True)
+children = list(vehicle.walk())
+
+subtypes = model.query.subtypes("Vehicle")
+part_rows = model.to_records(model.query.part_defs())
+containment = model.graph("containment")
+specialization = model.graph("specialization")
+```
+
+Compiled models also support snapshot comparison:
+
+```python
+before = project.compile()
+project.edit("VehicleExample.Vehicle.engine").rename("motor")
+after = project.compile()
+
+differences = before.diff(after)
+```
+
+Trade-study variants are low-cost overlays over rendered project source:
+
+```python
+study = project.trade_study("battery-sizing")
+
+small = study.variant("small-pack")
+large = study.variant("large-pack")
+
+small.edit("VehicleExample.ElectricCar.batteryCapacity").set_value("50 [kW*h]")
+large.edit("VehicleExample.ElectricCar.batteryCapacity").set_value("90 [kW*h]")
+
+small_model = small.compile()
+large_model = large.compile()
+```
+
+Variants record the base source fingerprint used to create the overlay:
+
+```python
+assert large.base_fingerprint == project.source_fingerprint
+```
+
+By default, compiling a variant fails if the base project has changed since the
+variant was forked. This keeps trade studies revision-pinned:
+
+```python
+if large.is_base_stale:
+    large_model = large.compile(allow_stale_base=True)  # explicit stale overlay
+else:
+    large_model = large.compile()
+```
+
+Simulation configuration is declarative. Execution is intentionally a future
+layer, but configurations can already be bound to a compiled model, project, or
+variant and serialized with revision/source provenance:
+
+```python
+sim = large_model.simulation("drive-cycle")
+sim.for_subject("VehicleExample.ElectricCar").configure(duration=100, step=0.1)
+
+config = sim.to_dict()
+```
+
+The compatibility API remains available:
+
+```python
+with mercurio.open("C:/models/demo") as model:
+    parts = model.parts()
+```
+
 Attach to an already-running backend:
 
 ```python
