@@ -4,15 +4,18 @@ from .authoring import ModelBuilder
 from .runtime import Model
 from .session import (
     AnalysisQuery,
+    CellRunReport,
     CompiledModel,
     PartDefRef,
     PartUsageRef,
     ProjectSession,
     SemanticRef,
+    SemanticQuery,
     SimulationConfiguration,
     SmallEdit,
     StaleSemanticRefError,
     TradeStudy,
+    TransactionBuilder,
     Variant,
     VariantBaseChangedError,
 )

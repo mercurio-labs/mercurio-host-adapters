@@ -32,6 +32,61 @@ class MercurioProject:
     def search(self, query_text: str) -> list[JsonObject]:
         return self.client.get(self._path("/search"), query={"q": query_text})
 
+    def render_view(self, document: JsonObject) -> JsonObject:
+        return self.client.post(self._path("/views/render"), document)
+
+    def l2_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+        include_reference_edges: bool = True,
+    ) -> JsonObject:
+        response = self.render_view(
+            _view_document(
+                "explorer.l2",
+                {
+                    "seedId": seed_id,
+                    "expandedParents": list(expanded_parents or ()),
+                    "expandedChildren": list(expanded_children or ()),
+                    "includeReferenceEdges": include_reference_edges,
+                },
+            )
+        )
+        explorer = response.get("l2Explorer")
+        if not isinstance(explorer, dict):
+            raise RuntimeError("L2 explorer view did not return l2Explorer")
+        return explorer
+
+    def metatype_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+    ) -> JsonObject:
+        response = self.render_view(
+            _view_document(
+                "explorer.metatype",
+                {
+                    "seedId": seed_id,
+                    "expandedParents": list(expanded_parents or ()),
+                    "expandedChildren": list(expanded_children or ()),
+                },
+            )
+        )
+        explorer = response.get("metatypeExplorer")
+        if not isinstance(explorer, dict):
+            raise RuntimeError("metatype explorer view did not return metatypeExplorer")
+        return explorer
+
+    def mounted_library_trees(self) -> list[JsonObject]:
+        data = self.client.get(self._path("/library/mounted-trees"))
+        if not isinstance(data, list):
+            raise TypeError("mounted library trees response must be a JSON array")
+        return [dict(item) for item in data if isinstance(item, dict)]
+
     def files(self) -> JsonObject:
         return self.client.get(self._path("/editor/files"))
 
@@ -74,6 +129,42 @@ class MercurioProject:
 
     def workspace_session(self) -> JsonObject:
         return self.client.get(self._path("/semantic/workspace-session"))
+
+    def run_cell(self, request: JsonObject) -> JsonObject:
+        return self.client.post(self._path("/session/cells/run"), request)
+
+    def dsl_query(self, source: str) -> JsonObject:
+        report = self.run_cell({
+            "kind": "query",
+            "language": "mercurio_dsl",
+            "source": source,
+            "parameters": {},
+        })
+        for output in report.get("outputs", []):
+            if output.get("id") == "result":
+                return output.get("value")
+        raise RuntimeError("DSL query cell did not return a result output")
+
+    def dsl_action(self, source: str) -> JsonObject:
+        report = self.run_cell({
+            "kind": "action",
+            "language": "mercurio_dsl",
+            "source": source,
+            "parameters": {},
+        })
+        for output in report.get("outputs", []):
+            if output.get("id") == "result":
+                value = output.get("value")
+                if isinstance(value, dict):
+                    return value
+                return {"value": value}
+        raise RuntimeError("DSL action cell did not return a result output")
+
+    def action_dsl(self, source: str) -> JsonObject:
+        return self.dsl_action(source)
+
+    def dsl_schema(self) -> JsonObject:
+        return self.client.get(self._path("/dsl/schema"))
 
     def compile_project(
         self,
@@ -147,6 +238,16 @@ class MercurioProject:
             {"path": path, "content": content}
             for path, content in staged_files.items()
         ]
+
+
+def _view_document(kind: str, parameters: JsonObject) -> JsonObject:
+    return {
+        "schema": "mercurio.view.v1",
+        "version": 1,
+        "kind": kind,
+        "mode": "visualization",
+        "parameters": dict(parameters),
+    }
 
 
 MercurioWorkspace = MercurioProject

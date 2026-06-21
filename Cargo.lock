@@ -269,6 +269,7 @@ dependencies = [
  "mercurio-sysml",
  "mercurio-view-model",
  "pyo3",
+ "serde",
  "serde_json",
 ]
 

@@ -16,4 +16,5 @@ mercurio-core = { package = "mercurio-foundation", path = "../../../mercurio-fou
 mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 mercurio-view-model = { path = "../mercurio-view-model" }
 pyo3 = { workspace = true, features = ["abi3-py310", "extension-module"] }
+serde.workspace = true
 serde_json.workspace = true

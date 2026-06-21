@@ -5,15 +5,18 @@ import os as _os
 from .runtime import Model
 from .session import (
     AnalysisQuery,
+    CellRunReport,
     CompiledModel,
     PartDefRef,
     PartUsageRef,
     ProjectSession,
     SemanticRef,
+    SemanticQuery,
     SimulationConfiguration,
     SmallEdit,
     StaleSemanticRefError,
     TradeStudy,
+    TransactionBuilder,
     Variant,
     VariantBaseChangedError,
 )
@@ -22,6 +25,7 @@ from . import extensions
 
 __all__ = [
     "AnalysisQuery",
+    "CellRunReport",
     "CompiledModel",
     "LabModel",
     "Model",
@@ -29,10 +33,12 @@ __all__ = [
     "PartUsageRef",
     "ProjectSession",
     "SemanticRef",
+    "SemanticQuery",
     "SimulationConfiguration",
     "SmallEdit",
     "StaleSemanticRefError",
     "TradeStudy",
+    "TransactionBuilder",
     "Variant",
     "VariantBaseChangedError",
     "batch_run",

@@ -3,11 +3,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use mercurio_core::{
-    AttributeWritePolicy, AuthoringProject, CommitMode, CommitResult, CommitStrategy,
-    ContainerSelector, ElementView, ForkElement, Graph, KirDocument, MetamodelAttributeRegistry,
-    ModelFork, ModelSession, ModelWorkspace, Mutation, ProjectDescriptor, QualifiedName,
-    SemanticEdit, SessionError, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
-    default_language_profile, generate_python_wrappers, resolve_project_descriptor_context,
+    AttributeWritePolicy, AuthoringProject, CapabilityRunStatus, CellKind, CellLanguage,
+    CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
+    CommitResult, CommitStrategy, ContainerSelector, DslAnalysisRunRequest, DslAnalysisRunSpec,
+    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, ForkElement, Graph,
+    GraphScope, KirDocument, L2ExplorerRequestDto, MetamodelAttributeRegistry,
+    MetatypeExplorerRequestDto, ModelFork, ModelSession, ModelWorkspace, Mutation,
+    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticMutation,
+    SemanticTransaction, SessionError, TransactionOperation, WorkspaceSnapshot, WriteBackMode,
+    WriteBackResult, collect_specialization_ancestors, default_language_profile, element_metatype,
+    generate_python_wrappers, graph_view, l2_explorer_view, library_tree_view,
+    metatype_explorer_view, model_metadata_view, resolve_project_descriptor_context, search_view,
 };
 use mercurio_sysml::{
     StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
@@ -20,6 +26,7 @@ use mercurio_view_model::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyType};
+use serde::{Deserialize, Serialize};
 
 static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
 const PROJECT_DESCRIPTOR_FILE_NAME: &str = ".project.json";
@@ -64,6 +71,7 @@ struct PySemanticModel {
 struct PyWorkspace {
     document: Arc<KirDocument>,
     graph: Arc<Graph>,
+    registry: Arc<MetamodelAttributeRegistry>,
 }
 
 #[pymethods]
@@ -73,9 +81,11 @@ impl PyWorkspace {
         let document = compile_workspace_path(Path::new(path))?;
         let graph = Graph::from_document(document.clone())
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let registry = MetamodelAttributeRegistry::build(&graph);
         Ok(Self {
             document: Arc::new(document),
             graph: Arc::new(graph),
+            registry: Arc::new(registry),
         })
     }
 
@@ -107,8 +117,49 @@ impl PyWorkspace {
         element_details_from_graph(&self.graph, id).map(|inner| PyKirElement { inner })
     }
 
+    fn model_metadata_json(&self) -> PyResult<String> {
+        model_metadata_json(&self.graph, &self.document)
+    }
+
+    #[pyo3(signature = (scope=None))]
+    fn graph_view_json(&self, scope: Option<&str>) -> PyResult<String> {
+        graph_view_json(&self.graph, scope)
+    }
+
+    fn search_json(&self, query: &str) -> PyResult<String> {
+        search_json(&self.graph, query)
+    }
+
+    fn element_details_json(&self, element_id: &str) -> PyResult<String> {
+        element_details_json(&self.graph, &self.registry, element_id)
+    }
+
+    fn l2_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        l2_explorer_json(&self.graph, request_json)
+    }
+
+    fn metatype_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        metatype_explorer_json(&self.graph, &self.registry, request_json)
+    }
+
+    fn library_tree_json(&self) -> PyResult<String> {
+        library_tree_json(&self.graph)
+    }
+
     fn compile(&self) -> PyResult<PySemanticModel> {
         py_semantic_model((*self.document).clone())
+    }
+
+    fn dsl_query_json(&self, source: &str) -> PyResult<String> {
+        dsl_query_json(Arc::clone(&self.graph), source)
+    }
+
+    fn dsl_schema_json(&self) -> PyResult<String> {
+        dsl_schema_json(&self.graph)
+    }
+
+    fn run_cell_json(&self, request_json: &str) -> PyResult<String> {
+        run_cell_json(Arc::clone(&self.graph), request_json)
     }
 
     fn list_analysis_cases(&self) -> PyResult<Vec<String>> {
@@ -248,14 +299,62 @@ impl PySemanticModel {
     }
 
     fn semantic_snapshot_json(&self) -> PyResult<String> {
-        serde_json::to_string_pretty(&semantic_snapshot_rows(&self.document))
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+        serde_json::to_string_pretty(&semantic_snapshot_rows_with_graph(
+            &self.document,
+            Some(&self.graph),
+        ))
+        .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
     fn generate_python_wrappers(&self, module_name: String) -> PyResult<BTreeMap<String, String>> {
         let profile =
             default_language_profile().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         Ok(generate_python_wrappers(&self.document, &profile, &module_name).files)
+    }
+
+    fn model_metadata_json(&self) -> PyResult<String> {
+        model_metadata_json(&self.graph, &self.document)
+    }
+
+    #[pyo3(signature = (scope=None))]
+    fn graph_view_json(&self, scope: Option<&str>) -> PyResult<String> {
+        graph_view_json(&self.graph, scope)
+    }
+
+    fn search_json(&self, query: &str) -> PyResult<String> {
+        search_json(&self.graph, query)
+    }
+
+    fn element_details_json(&self, element_id: &str) -> PyResult<String> {
+        element_details_json(&self.graph, &self.registry, element_id)
+    }
+
+    fn l2_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        l2_explorer_json(&self.graph, request_json)
+    }
+
+    fn metatype_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        metatype_explorer_json(&self.graph, &self.registry, request_json)
+    }
+
+    fn library_tree_json(&self) -> PyResult<String> {
+        library_tree_json(&self.graph)
+    }
+
+    fn dsl_query_json(&self, source: &str) -> PyResult<String> {
+        dsl_query_json(Arc::clone(&self.graph), source)
+    }
+
+    fn dsl_schema_json(&self) -> PyResult<String> {
+        dsl_schema_json(&self.graph)
+    }
+
+    fn run_cell_json(&self, request_json: &str) -> PyResult<String> {
+        run_cell_json(Arc::clone(&self.graph), request_json)
+    }
+
+    fn preview_transaction_json(&self, request_json: &str) -> PyResult<String> {
+        preview_transaction_json(request_json)
     }
 
     fn __repr__(&self) -> String {
@@ -1235,7 +1334,325 @@ fn py_semantic_model(document: KirDocument) -> PyResult<PySemanticModel> {
     })
 }
 
+fn native_dsl_engine() -> DslEngine {
+    DslEngine::with_extensions(vec![mercurio_sysml::sysml_dsl_extension()])
+}
+
+fn dsl_query_json(graph: Arc<Graph>, source: &str) -> PyResult<String> {
+    let result = native_dsl_engine()
+        .execute_query(
+            graph,
+            DslQueryRequest {
+                script: source.to_string(),
+                script_name: None,
+                limits: None,
+            },
+        )
+        .map(|report| report.result)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    serde_json::to_string(&result).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+}
+
+fn dsl_schema_json(graph: &Graph) -> PyResult<String> {
+    let schema = native_dsl_engine().schema_for(graph);
+    serde_json::to_string(&schema).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+}
+
+fn model_metadata_json(graph: &Graph, document: &KirDocument) -> PyResult<String> {
+    to_json_string(&model_metadata_view(graph, document))
+}
+
+fn graph_view_json(graph: &Graph, scope: Option<&str>) -> PyResult<String> {
+    to_json_string(&graph_view(graph, GraphScope::from_query(scope)))
+}
+
+fn search_json(graph: &Graph, query: &str) -> PyResult<String> {
+    to_json_string(&search_view(graph, query))
+}
+
+fn element_details_json(
+    graph: &Graph,
+    registry: &MetamodelAttributeRegistry,
+    element_id: &str,
+) -> PyResult<String> {
+    let details = mercurio_core::element_details(graph, registry, element_id)
+        .ok_or_else(|| PyValueError::new_err(format!("element not found: {element_id}")))?;
+    to_json_string(&details)
+}
+
+fn l2_explorer_json(graph: &Graph, request_json: &str) -> PyResult<String> {
+    let request: L2ExplorerRequestDto =
+        serde_json::from_str(request_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let view = l2_explorer_view(graph, &request)
+        .ok_or_else(|| PyValueError::new_err(format!("element not found: {}", request.seed_id)))?;
+    to_json_string(&view)
+}
+
+fn metatype_explorer_json(
+    graph: &Graph,
+    registry: &MetamodelAttributeRegistry,
+    request_json: &str,
+) -> PyResult<String> {
+    let request: MetatypeExplorerRequestDto =
+        serde_json::from_str(request_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let view = metatype_explorer_view(graph, registry, &request)
+        .ok_or_else(|| PyValueError::new_err(format!("element not found: {}", request.seed_id)))?;
+    to_json_string(&view)
+}
+
+fn library_tree_json(graph: &Graph) -> PyResult<String> {
+    to_json_string(&library_tree_view(graph))
+}
+
+fn to_json_string<T: Serialize>(value: &T) -> PyResult<String> {
+    serde_json::to_string(value).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+struct PyTransactionPreviewRequest {
+    label: String,
+    #[serde(default)]
+    actions: Vec<PyTransactionAction>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PyTransactionAction {
+    RenameDeclaration {
+        element: String,
+        new_name: String,
+    },
+    SetAttribute {
+        element: String,
+        attribute: String,
+        value: serde_json::Value,
+    },
+}
+
+fn preview_transaction_json(request_json: &str) -> PyResult<String> {
+    let request: PyTransactionPreviewRequest =
+        serde_json::from_str(request_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let actions = request
+        .actions
+        .into_iter()
+        .map(py_transaction_action_to_mutation)
+        .collect::<Vec<_>>();
+    let operations = if actions.is_empty() {
+        Vec::new()
+    } else {
+        vec![TransactionOperation::change_set(SemanticChangeSet::new(
+            format!("{} change set 1", request.label),
+            actions,
+        ))]
+    };
+    let transaction = SemanticTransaction::new(request.label, None, operations);
+    to_json_string(&transaction.preview_report(Default::default()))
+}
+
+fn py_transaction_action_to_mutation(action: PyTransactionAction) -> SemanticMutation {
+    match action {
+        PyTransactionAction::RenameDeclaration { element, new_name } => {
+            SemanticMutation::RenameDeclaration {
+                element: ElementRef::new(element),
+                new_name,
+            }
+        }
+        PyTransactionAction::SetAttribute {
+            element,
+            attribute,
+            value,
+        } => SemanticMutation::SetAttribute {
+            element: ElementRef::new(element),
+            attribute,
+            value,
+        },
+    }
+}
+
+fn run_cell_json(graph: Arc<Graph>, request_json: &str) -> PyResult<String> {
+    let request: CellRunRequest =
+        serde_json::from_str(request_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let report = run_cell_on_graph(graph, request)?;
+    serde_json::to_string(&report).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+}
+
+fn run_cell_on_graph(graph: Arc<Graph>, request: CellRunRequest) -> PyResult<CellRunReport> {
+    let cell_id = request
+        .cell_id
+        .clone()
+        .unwrap_or_else(|| default_cell_id(&request));
+    match (&request.kind, request.language.as_ref()) {
+        (CellKind::Query, None | Some(CellLanguage::MercurioDsl)) => {
+            let result = native_dsl_engine()
+                .execute_query(
+                    graph,
+                    DslQueryRequest {
+                        script: request.source,
+                        script_name: None,
+                        limits: None,
+                    },
+                )
+                .map(|report| report.result)
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            Ok(CellRunReport {
+                session_id: request.session_id,
+                cell_id,
+                kind: CellKind::Query,
+                status: CellRunStatus::Passed,
+                outputs: vec![CellOutput {
+                    id: "result".to_string(),
+                    kind: CellOutputKind::Table,
+                    mime_type: Some("application/vnd.mercurio.dsl.query+json".to_string()),
+                    value: serde_json::to_value(result)
+                        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
+                }],
+                artifacts: Vec::new(),
+                diagnostics: Vec::new(),
+                capability_report: None,
+                metadata: BTreeMap::new(),
+            })
+        }
+        (CellKind::Action, None | Some(CellLanguage::MercurioDsl)) => {
+            let result = native_dsl_engine()
+                .execute_query(
+                    graph,
+                    DslQueryRequest {
+                        script: request.source,
+                        script_name: None,
+                        limits: None,
+                    },
+                )
+                .map(|report| dsl_query_result_to_value(report.result))
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            Ok(CellRunReport {
+                session_id: request.session_id,
+                cell_id,
+                kind: CellKind::Action,
+                status: CellRunStatus::Passed,
+                outputs: vec![CellOutput {
+                    id: "result".to_string(),
+                    kind: CellOutputKind::Json,
+                    mime_type: Some("application/vnd.mercurio.dsl.action-preview+json".to_string()),
+                    value: result,
+                }],
+                artifacts: Vec::new(),
+                diagnostics: Vec::new(),
+                capability_report: None,
+                metadata: BTreeMap::new(),
+            })
+        }
+        (CellKind::Analysis, None | Some(CellLanguage::MercurioDsl)) => {
+            let report = native_dsl_engine()
+                .execute_analysis_run(
+                    graph,
+                    DslAnalysisRunRequest {
+                        spec: DslAnalysisRunSpec {
+                            run_id: string_parameter(&request.parameters, "runId", "run_id")
+                                .unwrap_or_else(|| "dsl-analysis-run".to_string()),
+                            capability_id: string_parameter(
+                                &request.parameters,
+                                "capabilityId",
+                                "capability_id",
+                            )
+                            .unwrap_or_else(|| "mercurio.dsl.analysis".to_string()),
+                            script: request.source,
+                            subject_element_id: string_parameter(
+                                &request.parameters,
+                                "subjectElementId",
+                                "subject_element_id",
+                            ),
+                        },
+                        script_name: None,
+                        limits: None,
+                    },
+                )
+                .map(|report| report.report)
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            Ok(CellRunReport {
+                session_id: request.session_id,
+                cell_id,
+                kind: CellKind::Analysis,
+                status: cell_status_from_capability(report.status),
+                outputs: vec![CellOutput {
+                    id: "capability_report".to_string(),
+                    kind: CellOutputKind::CapabilityReport,
+                    mime_type: Some("application/vnd.mercurio.capability-run+json".to_string()),
+                    value: serde_json::to_value(&report)
+                        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
+                }],
+                artifacts: report.artifacts.clone(),
+                diagnostics: report.diagnostics.clone(),
+                capability_report: Some(report),
+                metadata: BTreeMap::new(),
+            })
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "unsupported native Python cell kind/language combination: kind={:?} language={:?}",
+            request.kind, request.language
+        ))),
+    }
+}
+
+fn default_cell_id(request: &CellRunRequest) -> String {
+    match (&request.kind, request.language.as_ref()) {
+        (CellKind::Query, None | Some(CellLanguage::MercurioDsl)) => "dsl.query".to_string(),
+        (CellKind::Action, None | Some(CellLanguage::MercurioDsl)) => "dsl.action".to_string(),
+        (CellKind::Analysis, None | Some(CellLanguage::MercurioDsl)) => "dsl.analysis".to_string(),
+        _ => "cell".to_string(),
+    }
+}
+
+fn dsl_query_result_to_value(result: DslQueryResult) -> serde_json::Value {
+    if result.rows.len() == 1 {
+        let row = &result.rows[0];
+        if result.columns.len() == 1 && result.columns[0] == "value" {
+            return row.first().cloned().unwrap_or(serde_json::Value::Null);
+        }
+        let mut object = serde_json::Map::new();
+        for (index, column) in result.columns.iter().enumerate() {
+            object.insert(
+                column.clone(),
+                row.get(index).cloned().unwrap_or(serde_json::Value::Null),
+            );
+        }
+        return serde_json::Value::Object(object);
+    }
+    serde_json::to_value(result).unwrap_or(serde_json::Value::Null)
+}
+
+fn string_parameter(
+    parameters: &BTreeMap<String, serde_json::Value>,
+    camel_key: &str,
+    snake_key: &str,
+) -> Option<String> {
+    parameters
+        .get(camel_key)
+        .or_else(|| parameters.get(snake_key))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn cell_status_from_capability(status: CapabilityRunStatus) -> CellRunStatus {
+    match status {
+        CapabilityRunStatus::Passed => CellRunStatus::Passed,
+        CapabilityRunStatus::Failed => CellRunStatus::Failed,
+        CapabilityRunStatus::Error => CellRunStatus::Error,
+        CapabilityRunStatus::Inconclusive
+        | CapabilityRunStatus::Partial
+        | CapabilityRunStatus::NotApplicable => CellRunStatus::Partial,
+    }
+}
+
+#[cfg(test)]
 fn semantic_snapshot_rows(document: &KirDocument) -> Vec<BTreeMap<String, serde_json::Value>> {
+    semantic_snapshot_rows_with_graph(document, None)
+}
+
+fn semantic_snapshot_rows_with_graph(
+    document: &KirDocument,
+    graph: Option<&Graph>,
+) -> Vec<BTreeMap<String, serde_json::Value>> {
     let mut rows = document
         .elements
         .iter()
@@ -1250,6 +1667,10 @@ fn semantic_snapshot_rows(document: &KirDocument) -> Vec<BTreeMap<String, serde_
                 serde_json::Value::String(element.kind.clone()),
             );
             row.insert("layer".to_string(), serde_json::json!(element.layer));
+            row.insert(
+                "model_layer".to_string(),
+                serde_json::Value::String(snapshot_model_layer_label(element.layer).to_string()),
+            );
             copy_snapshot_property(
                 &mut row,
                 &element.properties,
@@ -1320,6 +1741,7 @@ fn semantic_snapshot_rows(document: &KirDocument) -> Vec<BTreeMap<String, serde_
             copy_snapshot_property(&mut row, &element.properties, "direction", "direction");
             copy_snapshot_property(&mut row, &element.properties, "is_end", "is_end");
             copy_snapshot_property(&mut row, &element.properties, "is_abstract", "is_abstract");
+            add_snapshot_metatype_fields(&mut row, graph, element);
             row
         })
         .collect::<Vec<_>>();
@@ -1329,6 +1751,185 @@ fn semantic_snapshot_rows(document: &KirDocument) -> Vec<BTreeMap<String, serde_
             .then_with(|| snapshot_string(left, "id").cmp(&snapshot_string(right, "id")))
     });
     rows
+}
+
+fn add_snapshot_metatype_fields(
+    row: &mut BTreeMap<String, serde_json::Value>,
+    graph: Option<&Graph>,
+    element: &mercurio_core::KirElement,
+) {
+    if let Some((direct, chain)) =
+        graph.and_then(|graph| snapshot_metatype_from_graph(graph, &element.id))
+    {
+        row.insert(
+            "metatype_name".to_string(),
+            serde_json::Value::String(direct),
+        );
+        row.insert(
+            "metatype_chain".to_string(),
+            serde_json::Value::Array(chain.into_iter().map(serde_json::Value::String).collect()),
+        );
+        return;
+    }
+
+    let chain = snapshot_fallback_metatype_chain(element);
+    if let Some(direct) = chain.first() {
+        row.insert(
+            "metatype_name".to_string(),
+            serde_json::Value::String(direct.clone()),
+        );
+    }
+    row.insert(
+        "metatype_chain".to_string(),
+        serde_json::Value::Array(chain.into_iter().map(serde_json::Value::String).collect()),
+    );
+}
+
+fn snapshot_metatype_from_graph(graph: &Graph, element_id: &str) -> Option<(String, Vec<String>)> {
+    let node_id = graph.node_id(element_id)?;
+    let metatype = element_metatype(graph, node_id)?;
+    let direct = snapshot_metamodel_element_label(metatype);
+    let mut chain = Vec::new();
+    snapshot_push_unique(&mut chain, direct.clone());
+    for ancestor in collect_specialization_ancestors(graph, metatype.id) {
+        snapshot_push_unique(&mut chain, snapshot_metamodel_element_label(ancestor));
+    }
+    for ancestor in snapshot_fallback_metatype_ancestor_names(&direct) {
+        snapshot_push_unique(&mut chain, ancestor);
+    }
+    Some((direct, chain))
+}
+
+fn snapshot_metamodel_element_label(element: &mercurio_core::graph::Element) -> String {
+    element
+        .properties
+        .get("declared_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| snapshot_metatype_tail(&element.element_id).to_string())
+}
+
+fn snapshot_fallback_metatype_chain(element: &mercurio_core::KirElement) -> Vec<String> {
+    let direct = snapshot_direct_metatype_candidate(element)
+        .unwrap_or_else(|| snapshot_metatype_tail(&element.kind).to_string());
+    let mut chain = Vec::new();
+    snapshot_push_unique(&mut chain, direct.clone());
+    for ancestor in snapshot_fallback_metatype_ancestor_names(&direct) {
+        snapshot_push_unique(&mut chain, ancestor);
+    }
+    chain
+}
+
+fn snapshot_direct_metatype_candidate(element: &mercurio_core::KirElement) -> Option<String> {
+    let value = element.properties.get("metatype").or_else(|| {
+        element
+            .properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("metatype"))
+    })?;
+    snapshot_collect_metatype_value_candidates(value)
+        .into_iter()
+        .next()
+        .map(|candidate| snapshot_metatype_tail(&candidate).to_string())
+}
+
+fn snapshot_collect_metatype_value_candidates(value: &serde_json::Value) -> Vec<String> {
+    let mut values = Vec::new();
+    snapshot_collect_metatype_value_candidates_into(value, &mut values);
+    values
+}
+
+fn snapshot_collect_metatype_value_candidates_into(
+    value: &serde_json::Value,
+    values: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::String(value) => snapshot_push_unique(values, value.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                snapshot_collect_metatype_value_candidates_into(item, values);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for key in [
+                "label",
+                "name",
+                "declared_name",
+                "qualified_name",
+                "id",
+                "element_id",
+            ] {
+                if let Some(value) = object.get(key).and_then(serde_json::Value::as_str) {
+                    snapshot_push_unique(values, value.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn snapshot_fallback_metatype_ancestor_names(name: &str) -> Vec<String> {
+    const NONE: &[&str] = &[];
+    const ELEMENT: &[&str] = &["Element"];
+    const NAMESPACE: &[&str] = &["Namespace", "Element"];
+    const TYPE: &[&str] = &["Type", "Namespace", "Element"];
+    const CLASSIFIER: &[&str] = &["Classifier", "Type", "Namespace", "Element"];
+    const FEATURE: &[&str] = &["Feature", "Element"];
+    const RELATIONSHIP: &[&str] = &["Relationship", "Element"];
+
+    let key = snapshot_normalize_metatype_key(snapshot_metatype_tail(name));
+    let ancestors = match key.as_str() {
+        "element" => NONE,
+        "namespace" => ELEMENT,
+        "package" => NAMESPACE,
+        "type" => NAMESPACE,
+        "classifier" => TYPE,
+        "class" => CLASSIFIER,
+        "feature" | "step" => ELEMENT,
+        "relationship" | "dependency" | "membership" | "specialization" => ELEMENT,
+        _ if key.ends_with("definition") => CLASSIFIER,
+        _ if key.ends_with("usage") => FEATURE,
+        _ if key.ends_with("relationship") => RELATIONSHIP,
+        _ if !key.is_empty() => ELEMENT,
+        _ => NONE,
+    };
+    ancestors.iter().map(|name| (*name).to_string()).collect()
+}
+
+fn snapshot_model_layer_label(layer: u8) -> &'static str {
+    match layer {
+        0 => "foundation",
+        1 => "library",
+        2 => "user",
+        3 => "derived",
+        _ => "other",
+    }
+}
+
+fn snapshot_normalize_metatype_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .map(|value| value.to_ascii_lowercase())
+        .collect()
+}
+
+fn snapshot_metatype_tail(value: &str) -> &str {
+    let trimmed = value.trim();
+    trimmed
+        .rsplit(|ch| matches!(ch, ':' | '.' | '/' | '#'))
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(trimmed)
+}
+
+fn snapshot_push_unique(values: &mut Vec<String>, value: impl Into<String>) {
+    let value = value.into();
+    if !value.trim().is_empty() && !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
 }
 
 fn copy_first_snapshot_property(
@@ -1550,12 +2151,238 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        PyModelBuilder, PyModelWorkspace, PyWorkspace, compile_workspace_path,
-        project_sources_from_descriptor, semantic_snapshot_rows,
+        PyModelBuilder, PyModelWorkspace, PyWorkspace, compile_workspace_path, dsl_query_json,
+        dsl_schema_json, graph_view_json, l2_explorer_json, metatype_explorer_json,
+        model_metadata_json, preview_transaction_json, project_sources_from_descriptor,
+        run_cell_json, search_json, semantic_snapshot_rows,
     };
+    use mercurio_core::{Graph, KirDocument, KirElement, MetamodelAttributeRegistry};
     use pyo3::IntoPyObjectExt;
     use pyo3::Python;
     use pyo3::types::PyType;
+
+    fn dsl_test_graph() -> std::sync::Arc<Graph> {
+        std::sync::Arc::new(
+            Graph::from_document(KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![KirElement {
+                    id: "type.Demo.Vehicle".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "declared_name".to_string(),
+                        serde_json::json!("Vehicle"),
+                    )]),
+                }],
+            })
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn native_python_dsl_query_uses_shared_dsl_engine() {
+        let result: serde_json::Value = serde_json::from_str(
+            &dsl_query_json(dsl_test_graph(), "model.parts().count()").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(result["columns"], serde_json::json!(["value"]));
+        assert_eq!(result["rows"][0][0], serde_json::json!(1));
+    }
+
+    #[test]
+    fn native_python_cell_runner_returns_shared_cell_report() {
+        let request = serde_json::json!({
+            "kind": "query",
+            "language": "mercurio_dsl",
+            "source": "model.parts().select([\"declared_name\"])",
+            "parameters": {}
+        })
+        .to_string();
+        let report: serde_json::Value =
+            serde_json::from_str(&run_cell_json(dsl_test_graph(), &request).unwrap()).unwrap();
+
+        assert_eq!(report["cellId"], serde_json::json!("dsl.query"));
+        assert_eq!(report["status"], serde_json::json!("passed"));
+        assert_eq!(report["outputs"][0]["id"], serde_json::json!("result"));
+        assert_eq!(
+            report["outputs"][0]["value"]["rows"][0][0],
+            serde_json::json!("Vehicle")
+        );
+    }
+
+    #[test]
+    fn native_python_analysis_cell_runner_returns_capability_report() {
+        let request = serde_json::json!({
+            "kind": "analysis",
+            "language": "mercurio_dsl",
+            "source": "#{verdict: \"pass\", total_mass_kg: 12.0}",
+            "parameters": {
+                "runId": "mass-check",
+                "capabilityId": "mercurio.dsl.analysis",
+                "subjectElementId": "type.Demo.Vehicle"
+            }
+        })
+        .to_string();
+        let report: serde_json::Value =
+            serde_json::from_str(&run_cell_json(dsl_test_graph(), &request).unwrap()).unwrap();
+
+        assert_eq!(report["cellId"], serde_json::json!("dsl.analysis"));
+        assert_eq!(report["kind"], serde_json::json!("analysis"));
+        assert_eq!(report["status"], serde_json::json!("passed"));
+        assert_eq!(
+            report["outputs"][0]["id"],
+            serde_json::json!("capability_report")
+        );
+        assert_eq!(
+            report["capabilityReport"]["capability_id"],
+            serde_json::json!("mercurio.dsl.analysis")
+        );
+    }
+
+    #[test]
+    fn native_python_action_cell_runner_returns_preview_report() {
+        let request = serde_json::json!({
+            "kind": "action",
+            "language": "mercurio_dsl",
+            "source": "model.transaction(\"rename vehicle\").rename(\"type.Demo.Vehicle\", \"VehicleRenamed\").preview()",
+            "parameters": {}
+        })
+        .to_string();
+        let report: serde_json::Value =
+            serde_json::from_str(&run_cell_json(dsl_test_graph(), &request).unwrap()).unwrap();
+
+        assert_eq!(report["cellId"], serde_json::json!("dsl.action"));
+        assert_eq!(report["kind"], serde_json::json!("action"));
+        assert_eq!(report["status"], serde_json::json!("passed"));
+        assert_eq!(report["outputs"][0]["id"], serde_json::json!("result"));
+        assert_eq!(report["outputs"][0]["kind"], serde_json::json!("json"));
+        assert_eq!(
+            report["outputs"][0]["value"]["schema"],
+            serde_json::json!("mercurio.semantic_transaction.v1")
+        );
+        assert_eq!(
+            report["outputs"][0]["value"]["status"],
+            serde_json::json!("previewed")
+        );
+        assert_eq!(
+            report["outputs"][0]["value"]["operations"][0]["kind"],
+            serde_json::json!("change_set")
+        );
+    }
+
+    #[test]
+    fn native_python_transaction_preview_uses_structured_actions() {
+        let request = serde_json::json!({
+            "label": "python transaction",
+            "actions": [
+                {
+                    "kind": "rename_declaration",
+                    "element": "type.Demo.Vehicle",
+                    "new_name": "VehicleRenamed"
+                },
+                {
+                    "kind": "set_attribute",
+                    "element": "type.Demo.Vehicle",
+                    "attribute": "doc",
+                    "value": "checked"
+                }
+            ]
+        })
+        .to_string();
+        let report: serde_json::Value =
+            serde_json::from_str(&preview_transaction_json(&request).unwrap()).unwrap();
+
+        assert_eq!(report["status"], serde_json::json!("previewed"));
+        assert_eq!(report["operation_count"], serde_json::json!(1));
+        assert_eq!(
+            report["operations"][0]["kind"],
+            serde_json::json!("change_set")
+        );
+        assert_eq!(
+            report["operations"][0]["change_set"]["actions"][0]["RenameDeclaration"]["new_name"],
+            serde_json::json!("VehicleRenamed")
+        );
+        assert_eq!(
+            report["operations"][0]["change_set"]["actions"][1]["SetAttribute"]["value"],
+            serde_json::json!("checked")
+        );
+    }
+
+    #[test]
+    fn native_python_dsl_schema_includes_sysml_extension() {
+        let graph = dsl_test_graph();
+        let schema: serde_json::Value =
+            serde_json::from_str(&dsl_schema_json(&graph).unwrap()).unwrap();
+
+        assert!(
+            schema["stdlib_functions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "ModelContext.requirements")
+        );
+    }
+
+    #[test]
+    fn native_python_exploration_views_use_foundation_dtos() {
+        let graph = dsl_test_graph();
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![KirElement {
+                id: "type.Demo.Vehicle".to_string(),
+                kind: "PartDefinition".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([(
+                    "declared_name".to_string(),
+                    serde_json::json!("Vehicle"),
+                )]),
+            }],
+        };
+        let metadata: serde_json::Value =
+            serde_json::from_str(&model_metadata_json(&graph, &document).unwrap()).unwrap();
+        let scoped_graph: serde_json::Value =
+            serde_json::from_str(&graph_view_json(&graph, Some("l2")).unwrap()).unwrap();
+        let search: serde_json::Value =
+            serde_json::from_str(&search_json(&graph, "vehicle").unwrap()).unwrap();
+
+        assert_eq!(metadata["user_element_count"], serde_json::json!(1));
+        assert_eq!(
+            scoped_graph["nodes"][0]["id"],
+            serde_json::json!("type.Demo.Vehicle")
+        );
+        assert_eq!(search[0]["label"], serde_json::json!("Vehicle"));
+    }
+
+    #[test]
+    fn native_python_explorer_views_serialize_shared_dtos() {
+        let graph = dsl_test_graph();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        let l2_request = serde_json::json!({
+            "seed_id": "type.Demo.Vehicle",
+            "expanded_parents": [],
+            "expanded_children": [],
+            "include_reference_edges": true
+        })
+        .to_string();
+        let metatype_request = serde_json::json!({
+            "seed_id": "type.Demo.Vehicle",
+            "expanded_parents": [],
+            "expanded_children": []
+        })
+        .to_string();
+
+        let l2: serde_json::Value =
+            serde_json::from_str(&l2_explorer_json(&graph, &l2_request).unwrap()).unwrap();
+        let metatype: serde_json::Value = serde_json::from_str(
+            &metatype_explorer_json(&graph, &registry, &metatype_request).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(l2["seed_id"], serde_json::json!("type.Demo.Vehicle"));
+        assert_eq!(l2["nodes"][0]["is_seed"], serde_json::json!(true));
+        assert_eq!(metatype["seed_id"], serde_json::json!("type.Demo.Vehicle"));
+    }
 
     #[test]
     fn builder_creates_renders_and_compiles_model() {

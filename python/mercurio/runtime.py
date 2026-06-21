@@ -5,6 +5,15 @@ import json
 from .backend import Mercurio
 from .models import AnalysisCaseInfo, JsonObject, PartRef, SimulationTrace
 from .project import MercurioProject
+from .session import (
+    CellRunReport,
+    _canonical_json,
+    _cell_report_from_dict,
+    _cell_report_from_json,
+    _cell_request,
+    _explorer_request,
+    _view_document,
+)
 
 
 class RawWorkspace:
@@ -102,6 +111,150 @@ class Model:
             return workspace.run_analysis(case_id)
         return self._project.run_analysis(case_id)
 
+    def model_metadata(self) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _json_object(workspace.model_metadata_json(), "model metadata")
+        return self._project.model()
+
+    def graph(self, scope: str = "l2") -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _json_object(workspace.graph_view_json(scope), "graph view")
+        return self._project.graph(scope=scope)
+
+    def search(self, query: str) -> list[JsonObject]:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _json_object_list(workspace.search_json(query), "search")
+        return self._project.search(query)
+
+    def element_details(self, element_id: str) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _json_object(workspace.element_details_json(element_id), "element details")
+        return self._project.element(element_id)
+
+    def l2_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+        include_reference_edges: bool = True,
+    ) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            request = _explorer_request(
+                seed_id,
+                expanded_parents=expanded_parents,
+                expanded_children=expanded_children,
+                include_reference_edges=include_reference_edges,
+            )
+            return _json_object(
+                workspace.l2_explorer_json(_canonical_json(request)),
+                "L2 explorer",
+            )
+        return self._project.l2_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+            include_reference_edges=include_reference_edges,
+        )
+
+    def metatype_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+    ) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            request = _explorer_request(
+                seed_id,
+                expanded_parents=expanded_parents,
+                expanded_children=expanded_children,
+            )
+            return _json_object(
+                workspace.metatype_explorer_json(_canonical_json(request)),
+                "metatype explorer",
+            )
+        return self._project.metatype_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+        )
+
+    def render_view(self, document: JsonObject) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is None:
+            return self._project.render_view(document)
+        kind = str(document.get("kind") or "")
+        parameters = document.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+        if kind == "explorer.l2":
+            explorer = self.l2_explorer(
+                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
+                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or [],
+                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or [],
+                include_reference_edges=bool(
+                    parameters.get("includeReferenceEdges", parameters.get("include_reference_edges", True))
+                ),
+            )
+            return {"kind": kind, "document": dict(document), "l2Explorer": explorer}
+        if kind == "explorer.metatype":
+            explorer = self.metatype_explorer(
+                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
+                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or [],
+                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or [],
+            )
+            return {"kind": kind, "document": dict(document), "metatypeExplorer": explorer}
+        raise RuntimeError(
+            "native render_view() currently supports parameterized explorer.l2 "
+            "and explorer.metatype views; use a sidecar-backed model for full "
+            "view rendering"
+        )
+
+    def l2_explorer_view(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+        include_reference_edges: bool = True,
+    ) -> JsonObject:
+        return self.render_view(
+            _view_document(
+                "explorer.l2",
+                {
+                    "seedId": seed_id,
+                    "expandedParents": list(expanded_parents or ()),
+                    "expandedChildren": list(expanded_children or ()),
+                    "includeReferenceEdges": include_reference_edges,
+                },
+            )
+        )
+
+    def metatype_explorer_view(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: list[str] | None = None,
+        expanded_children: list[str] | None = None,
+    ) -> JsonObject:
+        return self.render_view(
+            _view_document(
+                "explorer.metatype",
+                {
+                    "seedId": seed_id,
+                    "expandedParents": list(expanded_parents or ()),
+                    "expandedChildren": list(expanded_children or ()),
+                },
+            )
+        )
+
     def semantic_snapshot_json(self) -> str:
         workspace = getattr(self, "_workspace", None)
         if workspace is not None:
@@ -109,6 +262,111 @@ class Model:
         raise RuntimeError(
             "semantic snapshots require the native workspace; open without an HTTP sidecar executable"
         )
+
+    def run_cell(
+        self,
+        source: str,
+        *,
+        kind: str = "query",
+        language: str | None = "mercurio_dsl",
+        parameters: dict[str, object] | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        request = _cell_request(
+            source,
+            kind=kind,
+            language=language,
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _cell_report_from_json(workspace.run_cell_json(_canonical_json(request)))
+        return _cell_report_from_dict(self._project.run_cell(request))
+
+    def dsl(self, source: str) -> object:
+        """Run a Mercurio DSL query/action-preview expression against the model."""
+        return self.run_cell(source, kind="query", language="mercurio_dsl").result
+
+    def query_dsl(self, source: str) -> object:
+        return self.dsl(source)
+
+    def run_action_dsl(
+        self,
+        source: str,
+        *,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        return self.run_cell(
+            source,
+            kind="action",
+            language="mercurio_dsl",
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def action_dsl(self, source: str) -> object:
+        return self.run_action_dsl(source).result
+
+    def preview_dsl(self, source: str) -> object:
+        return self.action_dsl(source)
+
+    def run_analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        parameters: dict[str, object] = {"capabilityId": capability_id}
+        if run_id is not None:
+            parameters["runId"] = run_id
+        if subject_element_id is not None:
+            parameters["subjectElementId"] = subject_element_id
+        return self.run_cell(
+            source,
+            kind="analysis",
+            language="mercurio_dsl",
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+    ) -> JsonObject:
+        report = self.run_analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+        )
+        if report.capability_report is not None:
+            return dict(report.capability_report)
+        value = report.output("capability_report").get("value")
+        if isinstance(value, dict):
+            return value
+        raise TypeError("analysis DSL cell did not return a capability report")
+
+    def dsl_schema(self) -> JsonObject:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            data = json.loads(workspace.dsl_schema_json())
+            if not isinstance(data, dict):
+                raise TypeError("DSL schema must be a JSON object")
+            return data
+        return self._project.dsl_schema()
 
     def close(self) -> None:
         if getattr(self, "_workspace", None) is not None:
@@ -124,3 +382,17 @@ class Model:
 
 
 ModelRuntime = Model
+
+
+def _json_object(raw: str, label: str) -> JsonObject:
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise TypeError(f"{label} response must be a JSON object")
+    return data
+
+
+def _json_object_list(raw: str, label: str) -> list[JsonObject]:
+    data = json.loads(raw)
+    if not isinstance(data, list):
+        raise TypeError(f"{label} response must be a JSON array")
+    return [dict(item) for item in data if isinstance(item, dict)]

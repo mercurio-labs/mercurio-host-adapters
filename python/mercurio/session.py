@@ -28,6 +28,29 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def _cell_request(
+    source: str,
+    *,
+    kind: str = "query",
+    language: str | None = "mercurio_dsl",
+    parameters: Mapping[str, Any] | None = None,
+    cell_id: str | None = None,
+    session_id: str | None = None,
+) -> JsonObject:
+    request: JsonObject = {
+        "kind": kind,
+        "source": source,
+        "parameters": dict(parameters or {}),
+    }
+    if language is not None:
+        request["language"] = language
+    if cell_id is not None:
+        request["cellId"] = cell_id
+    if session_id is not None:
+        request["sessionId"] = session_id
+    return request
+
+
 def _source_fingerprint(files: Mapping[str, str]) -> str:
     return hashlib.sha256(_canonical_json(dict(files)).encode("utf-8")).hexdigest()
 
@@ -56,6 +79,58 @@ def _row_name(row: JsonObject) -> str:
 
 def _short_name(qualified_name: str) -> str:
     return qualified_name.rsplit(".", 1)[-1]
+
+
+def _model_layer_label(value: Any) -> str:
+    try:
+        layer = int(value)
+    except (TypeError, ValueError):
+        return "" if value is None else str(value)
+    return {
+        0: "foundation",
+        1: "library",
+        2: "user",
+        3: "derived",
+    }.get(layer, "other")
+
+
+def _metatype_tail(value: str) -> str:
+    for separator in (":", ".", "/", "#"):
+        value = value.rsplit(separator, 1)[-1]
+    return value.strip().strip("\"'")
+
+
+def _normalize_metatype_key(value: str) -> str:
+    return "".join(ch.lower() for ch in value.strip() if ch.isalnum())
+
+
+def _metatype_match_keys(value: str) -> set[str]:
+    keys = {
+        _normalize_metatype_key(value),
+        _normalize_metatype_key(_metatype_tail(value)),
+    }
+    return {key for key in keys if key}
+
+
+def _metatype_names_match(candidate: str, expected: str) -> bool:
+    return bool(_metatype_match_keys(candidate) & _metatype_match_keys(expected))
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, Mapping):
+        for key in ("label", "name", "declared_name", "qualified_name", "id", "element_id"):
+            if key in value:
+                return _as_string_list(value[key])
+        return []
+    if isinstance(value, (list, tuple)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_as_string_list(item))
+        return values
+    text = str(value)
+    return [text] if text else []
 
 
 def _as_qualified_name(value: Any) -> str:
@@ -97,8 +172,47 @@ class SemanticRef:
     def name(self) -> str:
         return _short_name(self.qualified_name)
 
+    @property
+    def declared_name(self) -> str:
+        values = _as_string_list(
+            self.data.get("declared_name", self.data.get("declaredName"))
+        )
+        return values[0] if values else self.name
+
+    @property
+    def model_layer(self) -> str:
+        for key in ("model_layer", "modelLayer", "layer_name", "layerName"):
+            values = _as_string_list(self.data.get(key))
+            if values:
+                return values[0]
+        return _model_layer_label(self.data.get("layer"))
+
+    @property
+    def metatype_name(self) -> str | None:
+        for key in ("metatype_name", "metatypeName", "metatype"):
+            values = _as_string_list(self.data.get(key))
+            if values:
+                return _metatype_tail(values[0])
+        chain = self.metatype_chain
+        return chain[0] if chain else None
+
+    @property
+    def metatype_chain(self) -> list[str]:
+        for key in ("metatype_chain", "metatypeChain", "metatype_specialization_chain"):
+            values = _as_string_list(self.data.get(key))
+            if values:
+                return [_metatype_tail(value) for value in values]
+        for key in ("metatype_name", "metatypeName", "metatype"):
+            values = _as_string_list(self.data.get(key))
+            if values:
+                return [_metatype_tail(values[0])]
+        return []
+
     def attr(self, name: str, default: Any = None) -> Any:
         return self.data.get(name, default)
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return self.attr(name, default)
 
     def attrs(self) -> JsonObject:
         return dict(self.data)
@@ -113,6 +227,13 @@ class SemanticRef:
 
     def specializes(self) -> list[str]:
         return _row_values(self.data, "specializes", "specialization")
+
+    def is_metatype(self, expected: str, *, include_subtypes: bool = True) -> bool:
+        candidates = self.metatype_chain if include_subtypes else []
+        direct = self.metatype_name
+        if direct is not None:
+            candidates = [direct] + [item for item in candidates if item != direct]
+        return any(_metatype_names_match(candidate, expected) for candidate in candidates)
 
     def children(self) -> list["SemanticRef"]:
         return self._model.children_of(self)
@@ -148,11 +269,88 @@ class StaleSemanticRefError(RuntimeError):
     """Raised when editing through a ref from an older source state."""
 
 
+class SemanticQuery:
+    """Chainable read-only query over compiled semantic refs."""
+
+    def __init__(self, refs: Iterable[SemanticRef]) -> None:
+        self._refs = tuple(refs)
+
+    def __iter__(self) -> Iterable[SemanticRef]:
+        return iter(self._refs)
+
+    def __len__(self) -> int:
+        return len(self._refs)
+
+    def refs(self) -> list[SemanticRef]:
+        return list(self._refs)
+
+    def count(self) -> int:
+        return len(self._refs)
+
+    def first(self) -> SemanticRef | None:
+        return self._refs[0] if self._refs else None
+
+    def where(self, predicate: Callable[[SemanticRef], bool]) -> "SemanticQuery":
+        return type(self)(ref for ref in self._refs if predicate(ref))
+
+    def where_kind_contains(self, text: str) -> "SemanticQuery":
+        return self.where(lambda ref: text in ref.kind)
+
+    def where_metatype(self, expected: str) -> "SemanticQuery":
+        return self.where(lambda ref: ref.is_metatype(expected, include_subtypes=False))
+
+    def where_metatype_is(self, expected: str) -> "SemanticQuery":
+        return self.where(lambda ref: ref.is_metatype(expected, include_subtypes=True))
+
+    def where_model_layer(self, expected: str) -> "SemanticQuery":
+        expected_key = str(expected).lower()
+        return self.where(lambda ref: ref.model_layer.lower() == expected_key)
+
+    def order_by(self, field: str) -> "SemanticQuery":
+        return type(self)(
+            sorted(self._refs, key=lambda ref: str(_select_ref_field(ref, field) or ""))
+        )
+
+    def select(self, fields: Iterable[str]) -> list[JsonObject]:
+        columns = [str(field) for field in fields]
+        return [
+            {field: _select_ref_field(ref, field) for field in columns}
+            for ref in self._refs
+        ]
+
+
+def _select_ref_field(ref: SemanticRef, field: str) -> Any:
+    if field == "qualified_name":
+        return ref.qualified_name
+    if field == "name":
+        return ref.name
+    if field == "declared_name":
+        return ref.declared_name
+    if field == "kind":
+        return ref.kind
+    if field == "owner":
+        return ref.owner()
+    if field == "type":
+        return ref.type_name()
+    if field == "revision":
+        return ref.revision
+    if field == "model_layer":
+        return ref.model_layer
+    if field == "metatype_name":
+        return ref.metatype_name
+    if field == "metatype_chain":
+        return ref.metatype_chain
+    return ref.attr(field)
+
+
 class AnalysisQuery:
     """Read-only query and export helpers for one compiled model revision."""
 
     def __init__(self, model: "CompiledModel") -> None:
         self._model = model
+
+    def elements(self) -> SemanticQuery:
+        return SemanticQuery(self._model.refs())
 
     def refs(
         self,
@@ -166,6 +364,15 @@ class AnalysisQuery:
         if where is not None:
             refs = [ref for ref in refs if where(ref)]
         return refs
+
+    def where_metatype(self, expected: str) -> SemanticQuery:
+        return self.elements().where_metatype(expected)
+
+    def where_metatype_is(self, expected: str) -> SemanticQuery:
+        return self.elements().where_metatype_is(expected)
+
+    def where_model_layer(self, expected: str) -> SemanticQuery:
+        return self.elements().where_model_layer(expected)
 
     def part_defs(
         self,
@@ -194,6 +401,132 @@ class AnalysisQuery:
             return list(self._model.walk())
         root_ref = self._model.resolve(root) if isinstance(root, str) else root
         return list(root_ref.walk())
+
+
+@dataclass(frozen=True)
+class CellRunReport:
+    """Result from the shared Mercurio session/cell execution path."""
+
+    cell_id: str
+    kind: str
+    status: str
+    outputs: tuple[JsonObject, ...] = ()
+    artifacts: tuple[JsonObject, ...] = ()
+    diagnostics: tuple[JsonObject, ...] = ()
+    capability_report: JsonObject | None = None
+    metadata: FrozenJsonObject = field(default_factory=lambda: MappingProxyType({}))
+    session_id: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "CellRunReport":
+        outputs = tuple(dict(item) for item in data.get("outputs", []) if isinstance(item, Mapping))
+        artifacts = tuple(dict(item) for item in data.get("artifacts", []) if isinstance(item, Mapping))
+        diagnostics = tuple(dict(item) for item in data.get("diagnostics", []) if isinstance(item, Mapping))
+        capability_report = data.get("capabilityReport")
+        if capability_report is not None and not isinstance(capability_report, dict):
+            capability_report = {"value": capability_report}
+        metadata = data.get("metadata")
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        return cls(
+            session_id=None if data.get("sessionId") is None else str(data.get("sessionId")),
+            cell_id=str(data.get("cellId") or ""),
+            kind=str(data.get("kind") or ""),
+            status=str(data.get("status") or ""),
+            outputs=outputs,
+            artifacts=artifacts,
+            diagnostics=diagnostics,
+            capability_report=capability_report,
+            metadata=MappingProxyType(dict(metadata)),
+        )
+
+    def output(self, output_id: str) -> JsonObject:
+        for output in self.outputs:
+            if output.get("id") == output_id:
+                return dict(output)
+        raise KeyError(f"cell output {output_id!r} was not produced")
+
+    @property
+    def result(self) -> Any:
+        return self.output("result").get("value")
+
+    def to_dict(self) -> JsonObject:
+        data: JsonObject = {
+            "cellId": self.cell_id,
+            "kind": self.kind,
+            "status": self.status,
+            "outputs": [dict(item) for item in self.outputs],
+            "artifacts": [dict(item) for item in self.artifacts],
+            "diagnostics": [dict(item) for item in self.diagnostics],
+            "metadata": dict(self.metadata),
+        }
+        if self.session_id is not None:
+            data["sessionId"] = self.session_id
+        if self.capability_report is not None:
+            data["capabilityReport"] = dict(self.capability_report)
+        return data
+
+
+def _cell_report_from_dict(data: Mapping[str, Any]) -> CellRunReport:
+    return CellRunReport.from_dict(data)
+
+
+def _cell_report_from_json(raw: str) -> CellRunReport:
+    data = json.loads(raw)
+    if not isinstance(data, Mapping):
+        raise TypeError("cell run report must be a JSON object")
+    return _cell_report_from_dict(data)
+
+
+def _native_json_data(native: Any, method_name: str, *args: Any) -> Any:
+    method = getattr(native, method_name, None)
+    if method is None:
+        raise RuntimeError(
+            f"{method_name}() requires the native Mercurio model; compile through "
+            "the native Python package before calling this exploration API"
+        )
+    return json.loads(method(*args))
+
+
+def _native_json_object(native: Any, method_name: str, *args: Any) -> JsonObject:
+    data = _native_json_data(native, method_name, *args)
+    if not isinstance(data, dict):
+        raise TypeError(f"{method_name}() must return a JSON object")
+    return data
+
+
+def _native_json_list(native: Any, method_name: str, *args: Any) -> list[JsonObject]:
+    data = _native_json_data(native, method_name, *args)
+    if not isinstance(data, list):
+        raise TypeError(f"{method_name}() must return a JSON array")
+    return [dict(item) for item in data if isinstance(item, Mapping)]
+
+
+def _explorer_request(
+    seed_id: str,
+    *,
+    expanded_parents: Iterable[str] | None = None,
+    expanded_children: Iterable[str] | None = None,
+    include_reference_edges: bool | None = None,
+) -> JsonObject:
+    request: JsonObject = {
+        "seed_id": seed_id,
+        "expanded_parents": list(expanded_parents or ()),
+        "expanded_children": list(expanded_children or ()),
+    }
+    if include_reference_edges is not None:
+        request["include_reference_edges"] = include_reference_edges
+    return request
+
+
+def _view_document(kind: str, parameters: Mapping[str, Any]) -> JsonObject:
+    return {
+        "schema": "mercurio.view.v1",
+        "version": 1,
+        "kind": kind,
+        "mode": "visualization",
+        "parameters": dict(parameters),
+    }
 
 
 class CompiledModel:
@@ -234,9 +567,13 @@ class CompiledModel:
             {
                 "qualified_name": ref.qualified_name,
                 "name": ref.name,
+                "declared_name": ref.declared_name,
                 "kind": ref.kind,
                 "owner": ref.owner(),
                 "type": ref.type_name(),
+                "model_layer": ref.model_layer,
+                "metatype_name": ref.metatype_name,
+                "metatype_chain": ref.metatype_chain,
                 "revision": ref.revision,
             }
             for ref in selected
@@ -270,6 +607,203 @@ class CompiledModel:
             "nodes": self.to_records(),
             "edges": edges,
         }
+
+    def model_metadata(self) -> JsonObject:
+        return _native_json_object(self._native_model, "model_metadata_json")
+
+    def graph_view(self, scope: str = "l2") -> JsonObject:
+        return _native_json_object(self._native_model, "graph_view_json", scope)
+
+    def search(self, query: str) -> list[JsonObject]:
+        return _native_json_list(self._native_model, "search_json", query)
+
+    def element_details(self, element_id: str) -> JsonObject:
+        return _native_json_object(self._native_model, "element_details_json", element_id)
+
+    def l2_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+        include_reference_edges: bool = True,
+    ) -> JsonObject:
+        request = _explorer_request(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+            include_reference_edges=include_reference_edges,
+        )
+        return _native_json_object(
+            self._native_model,
+            "l2_explorer_json",
+            _canonical_json(request),
+        )
+
+    def metatype_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+    ) -> JsonObject:
+        request = _explorer_request(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+        )
+        return _native_json_object(
+            self._native_model,
+            "metatype_explorer_json",
+            _canonical_json(request),
+        )
+
+    def render_view(self, document: Mapping[str, Any]) -> JsonObject:
+        kind = str(document.get("kind") or "")
+        parameters = document.get("parameters")
+        if not isinstance(parameters, Mapping):
+            parameters = {}
+        if kind == "explorer.l2":
+            explorer = self.l2_explorer(
+                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
+                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or (),
+                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or (),
+                include_reference_edges=bool(
+                    parameters.get("includeReferenceEdges", parameters.get("include_reference_edges", True))
+                ),
+            )
+            return {"kind": kind, "document": dict(document), "l2Explorer": explorer}
+        if kind == "explorer.metatype":
+            explorer = self.metatype_explorer(
+                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
+                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or (),
+                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or (),
+            )
+            return {"kind": kind, "document": dict(document), "metatypeExplorer": explorer}
+        raise RuntimeError(
+            "native render_view() currently supports parameterized explorer.l2 "
+            "and explorer.metatype views; use a sidecar-backed model for full "
+            "view rendering"
+        )
+
+    def run_cell(
+        self,
+        source: str,
+        *,
+        kind: str = "query",
+        language: str | None = "mercurio_dsl",
+        parameters: Mapping[str, Any] | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        if not hasattr(self._native_model, "run_cell_json"):
+            raise RuntimeError(
+                "cell execution requires the native Mercurio model; compile through "
+                "the native Python package before calling run_cell()"
+            )
+        request = _cell_request(
+            source,
+            kind=kind,
+            language=language,
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+        return _cell_report_from_json(self._native_model.run_cell_json(_canonical_json(request)))
+
+    def dsl(self, source: str) -> Any:
+        """Run a Mercurio DSL query/action-preview expression against this revision."""
+        return self.run_cell(source, kind="query", language="mercurio_dsl").result
+
+    def query_dsl(self, source: str) -> Any:
+        return self.dsl(source)
+
+    def run_action_dsl(
+        self,
+        source: str,
+        *,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        return self.run_cell(
+            source,
+            kind="action",
+            language="mercurio_dsl",
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def action_dsl(self, source: str) -> Any:
+        return self.run_action_dsl(source).result
+
+    def preview_dsl(self, source: str) -> Any:
+        return self.action_dsl(source)
+
+    def run_analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        parameters: JsonObject = {"capabilityId": capability_id}
+        if run_id is not None:
+            parameters["runId"] = run_id
+        if subject_element_id is not None:
+            parameters["subjectElementId"] = subject_element_id
+        return self.run_cell(
+            source,
+            kind="analysis",
+            language="mercurio_dsl",
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+    ) -> JsonObject:
+        report = self.run_analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+        )
+        if report.capability_report is not None:
+            return dict(report.capability_report)
+        value = report.output("capability_report").get("value")
+        if isinstance(value, dict):
+            return value
+        raise TypeError("analysis DSL cell did not return a capability report")
+
+    def dsl_schema(self) -> JsonObject:
+        if not hasattr(self._native_model, "dsl_schema_json"):
+            raise RuntimeError(
+                "DSL schema inspection requires the native Mercurio model"
+            )
+        data = json.loads(self._native_model.dsl_schema_json())
+        if not isinstance(data, dict):
+            raise TypeError("DSL schema must be a JSON object")
+        return data
+
+    def preview_transaction(self, request: Mapping[str, Any]) -> JsonObject:
+        if not hasattr(self._native_model, "preview_transaction_json"):
+            raise RuntimeError(
+                "transaction preview requires the native Mercurio model"
+            )
+        return _native_json_object(
+            self._native_model,
+            "preview_transaction_json",
+            _canonical_json(dict(request)),
+        )
 
     def simulation(self, name: str) -> "SimulationConfiguration":
         return SimulationConfiguration(name, self)
@@ -424,6 +958,58 @@ class SmallEdit:
         self._builder.remove(self._target)
 
 
+class TransactionBuilder:
+    """Fluent Python facade for semantic transaction preview and source edits."""
+
+    def __init__(self, owner: Any, label: str) -> None:
+        self._owner = owner
+        self.label = label
+        self._operations: list[tuple[str, tuple[Any, ...]]] = []
+
+    def rename(self, element: Any, new_name: str) -> "TransactionBuilder":
+        self._operations.append(("rename", (_as_qualified_name(element), new_name)))
+        return self
+
+    def set_attribute(self, element: Any, attribute: str, value: Any) -> "TransactionBuilder":
+        self._operations.append(
+            ("set_attribute", (_as_qualified_name(element), attribute, value))
+        )
+        return self
+
+    def to_dict(self) -> JsonObject:
+        actions: list[JsonObject] = []
+        for kind, args in self._operations:
+            if kind == "rename":
+                element, new_name = args
+                actions.append({
+                    "kind": "rename_declaration",
+                    "element": element,
+                    "new_name": new_name,
+                })
+            elif kind == "set_attribute":
+                element, attribute, value = args
+                actions.append({
+                    "kind": "set_attribute",
+                    "element": element,
+                    "attribute": attribute,
+                    "value": value,
+                })
+        return {"label": self.label, "actions": actions}
+
+    def preview(self) -> JsonObject:
+        return self._owner.compile().preview_transaction(self.to_dict())
+
+    def apply(self) -> Any:
+        for kind, args in self._operations:
+            if kind == "rename":
+                element, new_name = args
+                self._owner.edit(element).rename(new_name)
+            elif kind == "set_attribute":
+                element, attribute, value = args
+                self._owner.edit(element).set_attribute(attribute, value)
+        return getattr(self._owner, "_variant", self._owner)
+
+
 class ProjectSession:
     """Mutable, source-backed context for authoring, editing, and compiling."""
 
@@ -457,6 +1043,9 @@ class ProjectSession:
         self._assert_ref_current(target)
         return SmallEdit(self._builder, target)
 
+    def transaction(self, label: str) -> TransactionBuilder:
+        return TransactionBuilder(self, label)
+
     def compile(self) -> CompiledModel:
         model = CompiledModel(self._builder.compile(), source=self)
         self._compiled_source_fingerprints[model.revision] = self.source_fingerprint
@@ -471,6 +1060,130 @@ class ProjectSession:
 
     def save(self, path: str | Path | None = None) -> None:
         self._builder.save(path)
+
+    def run_cell(
+        self,
+        source: str,
+        *,
+        kind: str = "query",
+        language: str | None = "mercurio_dsl",
+        parameters: Mapping[str, Any] | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        return self.compile().run_cell(
+            source,
+            kind=kind,
+            language=language,
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def dsl(self, source: str) -> Any:
+        return self.run_cell(source, kind="query", language="mercurio_dsl").result
+
+    def query_dsl(self, source: str) -> Any:
+        return self.dsl(source)
+
+    def run_action_dsl(
+        self,
+        source: str,
+        *,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        return self.compile().run_action_dsl(
+            source,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def action_dsl(self, source: str) -> Any:
+        return self.run_action_dsl(source).result
+
+    def preview_dsl(self, source: str) -> Any:
+        return self.action_dsl(source)
+
+    def run_analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CellRunReport:
+        return self.compile().run_analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+    ) -> JsonObject:
+        return self.compile().analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+        )
+
+    def dsl_schema(self) -> JsonObject:
+        return self.compile().dsl_schema()
+
+    def model_metadata(self) -> JsonObject:
+        return self.compile().model_metadata()
+
+    def graph_view(self, scope: str = "l2") -> JsonObject:
+        return self.compile().graph_view(scope)
+
+    def search(self, query: str) -> list[JsonObject]:
+        return self.compile().search(query)
+
+    def element_details(self, element_id: str) -> JsonObject:
+        return self.compile().element_details(element_id)
+
+    def l2_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+        include_reference_edges: bool = True,
+    ) -> JsonObject:
+        return self.compile().l2_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+            include_reference_edges=include_reference_edges,
+        )
+
+    def metatype_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+    ) -> JsonObject:
+        return self.compile().metatype_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+        )
+
+    def render_view(self, document: Mapping[str, Any]) -> JsonObject:
+        return self.compile().render_view(document)
 
     def trade_study(self, name: str) -> "TradeStudy":
         return TradeStudy(name, self)
@@ -499,6 +1212,17 @@ class ProjectSession:
                 f"current source fingerprint is {current_fingerprint}. Recompile and "
                 "resolve a fresh ref before editing."
             )
+
+
+class _StaleTolerantVariant:
+    def __init__(self, variant: "Variant") -> None:
+        self._variant = variant
+
+    def edit(self, target: Any) -> SmallEdit:
+        return self._variant.edit(target)
+
+    def compile(self) -> CompiledModel:
+        return self._variant.compile(allow_stale_base=True)
 
 
 class TradeStudy:
@@ -539,6 +1263,11 @@ class Variant:
         self._assert_ref_current(target)
         return SmallEdit(self._builder, target)
 
+    def transaction(self, label: str, *, allow_stale_base: bool = False) -> TransactionBuilder:
+        if allow_stale_base:
+            return TransactionBuilder(_StaleTolerantVariant(self), label)
+        return TransactionBuilder(self, label)
+
     def add(self, declaration: Any) -> "Variant":
         self._builder.add(declaration)
         return self
@@ -575,6 +1304,146 @@ class Variant:
 
     def simulation(self, name: str) -> "SimulationConfiguration":
         return SimulationConfiguration(name, self)
+
+    def run_cell(
+        self,
+        source: str,
+        *,
+        kind: str = "query",
+        language: str | None = "mercurio_dsl",
+        parameters: Mapping[str, Any] | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+        allow_stale_base: bool = False,
+    ) -> CellRunReport:
+        return self.compile(allow_stale_base=allow_stale_base).run_cell(
+            source,
+            kind=kind,
+            language=language,
+            parameters=parameters,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def dsl(self, source: str, *, allow_stale_base: bool = False) -> Any:
+        return self.run_cell(
+            source,
+            kind="query",
+            language="mercurio_dsl",
+            allow_stale_base=allow_stale_base,
+        ).result
+
+    def query_dsl(self, source: str, *, allow_stale_base: bool = False) -> Any:
+        return self.dsl(source, allow_stale_base=allow_stale_base)
+
+    def run_action_dsl(
+        self,
+        source: str,
+        *,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+        allow_stale_base: bool = False,
+    ) -> CellRunReport:
+        return self.compile(allow_stale_base=allow_stale_base).run_action_dsl(
+            source,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def action_dsl(self, source: str, *, allow_stale_base: bool = False) -> Any:
+        return self.run_action_dsl(source, allow_stale_base=allow_stale_base).result
+
+    def preview_dsl(self, source: str, *, allow_stale_base: bool = False) -> Any:
+        return self.action_dsl(source, allow_stale_base=allow_stale_base)
+
+    def run_analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+        cell_id: str | None = None,
+        session_id: str | None = None,
+        allow_stale_base: bool = False,
+    ) -> CellRunReport:
+        return self.compile(allow_stale_base=allow_stale_base).run_analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+            cell_id=cell_id,
+            session_id=session_id,
+        )
+
+    def analysis_dsl(
+        self,
+        source: str,
+        *,
+        run_id: str | None = None,
+        capability_id: str = "mercurio.dsl.analysis",
+        subject_element_id: str | None = None,
+        allow_stale_base: bool = False,
+    ) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).analysis_dsl(
+            source,
+            run_id=run_id,
+            capability_id=capability_id,
+            subject_element_id=subject_element_id,
+        )
+
+    def dsl_schema(self, *, allow_stale_base: bool = False) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).dsl_schema()
+
+    def model_metadata(self, *, allow_stale_base: bool = False) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).model_metadata()
+
+    def graph_view(self, scope: str = "l2", *, allow_stale_base: bool = False) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).graph_view(scope)
+
+    def search(self, query: str, *, allow_stale_base: bool = False) -> list[JsonObject]:
+        return self.compile(allow_stale_base=allow_stale_base).search(query)
+
+    def element_details(self, element_id: str, *, allow_stale_base: bool = False) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).element_details(element_id)
+
+    def l2_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+        include_reference_edges: bool = True,
+        allow_stale_base: bool = False,
+    ) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).l2_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+            include_reference_edges=include_reference_edges,
+        )
+
+    def metatype_explorer(
+        self,
+        seed_id: str,
+        *,
+        expanded_parents: Iterable[str] | None = None,
+        expanded_children: Iterable[str] | None = None,
+        allow_stale_base: bool = False,
+    ) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).metatype_explorer(
+            seed_id,
+            expanded_parents=expanded_parents,
+            expanded_children=expanded_children,
+        )
+
+    def render_view(
+        self,
+        document: Mapping[str, Any],
+        *,
+        allow_stale_base: bool = False,
+    ) -> JsonObject:
+        return self.compile(allow_stale_base=allow_stale_base).render_view(document)
 
     def __repr__(self) -> str:
         return (

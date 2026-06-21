@@ -50,6 +50,13 @@ def _ref(value: Any) -> str:
     return str(value)
 
 
+def _write_text_atomic(path: Path, source: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(source, encoding="utf-8")
+    tmp.replace(path)
+
+
 class ModelBuilder:
     def __init__(self, *, validate_each_mutation: bool = True) -> None:
         self._inner = _NativeModelBuilder(validate_each_mutation)
@@ -499,8 +506,7 @@ class ModelBuilder:
             root = Path(path)
         for rel, source in self.to_sysml().items():
             output = root / rel
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(source, encoding="utf-8")
+            _write_text_atomic(output, source)
 
 
 class _Declaration:
