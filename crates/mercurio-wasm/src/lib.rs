@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use mercurio_core::frontend::ast::{Declaration, GenericUsageDecl, SourceSpan};
 use mercurio_core::{
-    AssessmentSpec, AssessmentStatus, ExecutionContext, Fact, Graph, KirDocument,
-    MetamodelAttributeRegistry, RulePack, Runtime, RuntimeAssessmentRequest,
+    AssessmentSpec, AssessmentStatus, CapabilityRunStatus, ExecutionContext, Fact, Graph,
+    KirDocument, MetamodelAttributeRegistry, RulePack, Runtime, RuntimeAssessmentRequest,
     load_default_rulepacks, run_graph_assessment, run_runtime_assessment,
 };
 use mercurio_kerml::{compile_kerml_text, parse_kerml};
@@ -13,8 +13,10 @@ use mercurio_simulation::{
     StateMachineScenarioEvent, list_analysis_cases, run_analysis_case, run_concurrent_simulation,
 };
 use mercurio_sysml::{
-    Diagnostic, SemanticCompileStatus, SourceLanguage, SysmlModule,
-    compile_sysml_text_with_context_report, parse_sysml_recovering, project_state_machines,
+    Diagnostic, SYSML_JSON_IMPORTER_VERSION, SemanticCompileStatus, SourceLanguage,
+    SysmlJsonImportError, SysmlJsonImportOptions, SysmlJsonImportReport, SysmlModule,
+    compile_sysml_text_with_context_report, import_sysml_abstract_syntax_json,
+    import_sysml_api_elements, parse_sysml_recovering, project_state_machines,
     sysml_parsed_module_assessment_facts,
 };
 use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
@@ -79,6 +81,25 @@ pub fn compile_kerml(input: &str, options: JsValue) -> JsValue {
                 Some(serde_json::to_value(vec![error])?),
             )),
         }
+    })
+}
+
+#[wasm_bindgen(js_name = importSysmlAbstractSyntaxJson)]
+pub fn wasm_import_sysml_abstract_syntax_json(input: &str, options: JsValue) -> JsValue {
+    json_response(|| {
+        let options = sysml_json_import_options_from_js(options)?;
+        let report = import_sysml_abstract_syntax_json(input, options)?;
+        import_response(report)
+    })
+}
+
+#[wasm_bindgen(js_name = importSysmlApiElements)]
+pub fn wasm_import_sysml_api_elements(elements: JsValue, metadata: JsValue) -> JsValue {
+    json_response(|| {
+        let elements: Vec<Value> = from_js(elements)?;
+        let metadata = sysml_json_import_options_from_js(metadata)?;
+        let report = import_sysml_api_elements(elements, metadata)?;
+        import_response(report)
     })
 }
 
@@ -790,24 +811,32 @@ impl MercurioSession {
         })
     }
 
-    /// Run an authored AnalysisCaseDefinition by ID and return a SimulationTrace.
+    /// Run an authored AnalysisCaseDefinition by ID and return a capability report.
     #[wasm_bindgen(js_name = runAnalysisCase)]
     pub fn run_analysis_case(&self, analysis_case_id: String) -> JsValue {
         json_response(|| {
             let runtime = Runtime::from_document(self.merged_document()?)?;
-            let trace = run_analysis_case(&runtime, &analysis_case_id)
+            let run_id = format!("wasm.analysis_case.{analysis_case_id}");
+            let report = run_analysis_case(&runtime, &analysis_case_id, &run_id)
                 .map_err(|error| WasmError::new("simulation", error.to_string()))?;
-            let completed = matches!(trace.status, SimulationStatus::Completed);
+            let completed = matches!(report.status, CapabilityRunStatus::Passed);
+            let step_count = report
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == "simulation_trace")
+                .and_then(|artifact| artifact.payload.get("timeline"))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
             Ok(Response {
                 ok: completed,
                 value: Some(
-                    serde_json::to_value(&trace)
+                    serde_json::to_value(&report)
                         .map_err(|error| WasmError::new("serialize", error.to_string()))?,
                 ),
                 diagnostics: json!([]),
                 errors: Vec::new(),
                 metadata: metadata([
-                    ("stepCount", json!(trace.timeline.len())),
+                    ("stepCount", json!(step_count)),
                     ("analysisCaseId", json!(analysis_case_id)),
                 ]),
             })
@@ -1035,6 +1064,30 @@ impl CompileOptions {
     }
 }
 
+fn sysml_json_import_options_from_js(value: JsValue) -> Result<SysmlJsonImportOptions, WasmError> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(SysmlJsonImportOptions::default());
+    }
+    from_js(value)
+}
+
+fn import_response(report: SysmlJsonImportReport) -> Result<Response, WasmError> {
+    let ok = !report.has_errors();
+    let diagnostics = serde_json::to_value(&report.diagnostics)?;
+    let metadata = report.metadata.clone();
+    Ok(Response {
+        ok,
+        value: Some(json!({
+            "status": if ok { "ok" } else { "partial" },
+            "document": report.document,
+            "importerVersion": SYSML_JSON_IMPORTER_VERSION,
+        })),
+        diagnostics,
+        errors: Vec::new(),
+        metadata,
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Response {
@@ -1092,6 +1145,7 @@ impl_error!(mercurio_core::RuntimeError, "runtime");
 impl_error!(mercurio_core::AssessmentError, "assessment");
 impl_error!(DiagramError, "diagram");
 impl_error!(Diagnostic, "diagnostic");
+impl_error!(SysmlJsonImportError, "sysmlJsonImport");
 
 fn load_stdlib(stdlib: Option<KirDocument>) -> Result<KirDocument, WasmError> {
     match stdlib {
