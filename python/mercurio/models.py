@@ -7,6 +7,20 @@ from typing import Any
 JsonObject = dict[str, Any]
 
 
+def _field(data: JsonObject, snake_name: str, camel_name: str, default: Any = None) -> Any:
+    return data.get(snake_name, data.get(camel_name, default))
+
+
+def _object_field(data: JsonObject, snake_name: str, camel_name: str) -> JsonObject:
+    value = _field(data, snake_name, camel_name, {})
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _list_field(data: JsonObject, snake_name: str, camel_name: str) -> list[Any]:
+    value = _field(data, snake_name, camel_name, [])
+    return list(value) if isinstance(value, list) else []
+
+
 @dataclass(frozen=True)
 class VersionInfo:
     service: str
@@ -159,6 +173,423 @@ class AnalysisCaseInfo:
             label=str(data["label"]),
             subject_count=int(data.get("subject_count", data.get("subjectCount", 0))),
         )
+
+
+@dataclass(frozen=True)
+class AnalysisElementRef:
+    element_id: str
+    kind: str
+    label: str | None
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisElementRef":
+        return cls(
+            element_id=str(_field(data, "element_id", "elementId", "")),
+            kind=str(data.get("kind", "")),
+            label=data.get("label"),
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisExpectedArtifact:
+    kind: str
+    schema: str
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisExpectedArtifact":
+        return cls(kind=str(data.get("kind", "")), schema=str(data.get("schema", "")))
+
+
+@dataclass(frozen=True)
+class AnalysisReadinessDiagnostic:
+    severity: str
+    code: str
+    message: str
+    element_id: str | None
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisReadinessDiagnostic":
+        return cls(
+            severity=str(data.get("severity", "")),
+            code=str(data.get("code", "")),
+            message=str(data.get("message", "")),
+            element_id=_field(data, "element_id", "elementId"),
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisClockConfig:
+    max_steps: int | None = None
+    step_duration_s: float | None = None
+    max_time_s: float | None = None
+    fixed_step_s: float | None = None
+    sample_interval_s: float | None = None
+    change_loop_limit: int | None = None
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisClockConfig":
+        max_steps = _field(data, "max_steps", "maxSteps")
+        step_duration_s = _field(data, "step_duration_s", "stepDurationS")
+        max_time_s = _field(data, "max_time_s", "maxTimeS")
+        fixed_step_s = _field(data, "fixed_step_s", "fixedStepS")
+        sample_interval_s = _field(data, "sample_interval_s", "sampleIntervalS")
+        change_loop_limit = _field(data, "change_loop_limit", "changeLoopLimit")
+        return cls(
+            max_steps=int(max_steps) if max_steps is not None else None,
+            step_duration_s=float(step_duration_s)
+            if step_duration_s is not None
+            else None,
+            max_time_s=float(max_time_s) if max_time_s is not None else None,
+            fixed_step_s=float(fixed_step_s) if fixed_step_s is not None else None,
+            sample_interval_s=float(sample_interval_s)
+            if sample_interval_s is not None
+            else None,
+            change_loop_limit=int(change_loop_limit)
+            if change_loop_limit is not None
+            else None,
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisExecutionContext:
+    initial_values: dict[str, dict[str, Any]]
+    clock: AnalysisClockConfig | None
+    provider_bindings: JsonObject
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisExecutionContext":
+        raw_initial_values = _object_field(data, "initial_values", "initialValues")
+        initial_values = {
+            str(subject_id): dict(values)
+            for subject_id, values in raw_initial_values.items()
+            if isinstance(values, dict)
+        }
+        raw_clock = _field(data, "clock", "clock")
+        return cls(
+            initial_values=initial_values,
+            clock=AnalysisClockConfig.from_json(raw_clock)
+            if isinstance(raw_clock, dict)
+            else None,
+            provider_bindings=_object_field(data, "provider_bindings", "providerBindings"),
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisExecutionStep:
+    kind: str
+    label: str
+    techniques: list[str]
+    elements: list[AnalysisElementRef]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisExecutionStep":
+        return cls(
+            kind=str(data.get("kind", "")),
+            label=str(data.get("label", "")),
+            techniques=[str(value) for value in data.get("techniques", [])],
+            elements=[
+                AnalysisElementRef.from_json(item)
+                for item in _list_field(data, "elements", "elements")
+                if isinstance(item, dict)
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisExecutionPlan:
+    steps: list[AnalysisExecutionStep]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisExecutionPlan":
+        return cls(
+            steps=[
+                AnalysisExecutionStep.from_json(item)
+                for item in _list_field(data, "steps", "steps")
+                if isinstance(item, dict)
+            ]
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisDynamicBehaviorBinding:
+    subject: AnalysisElementRef
+    behavior: AnalysisElementRef
+    kind: str
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisDynamicBehaviorBinding":
+        return cls(
+            subject=AnalysisElementRef.from_json(_object_field(data, "subject", "subject")),
+            behavior=AnalysisElementRef.from_json(
+                _object_field(data, "behavior", "behavior")
+            ),
+            kind=str(data.get("kind", "")),
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisSpec:
+    case_ref: AnalysisElementRef
+    model_revision: str
+    subjects: list[AnalysisElementRef]
+    inputs: list[AnalysisElementRef]
+    assumptions: list[AnalysisElementRef]
+    objectives: list[AnalysisElementRef]
+    calculations: list[AnalysisElementRef]
+    constraints: list[AnalysisElementRef]
+    requirements: list[AnalysisElementRef]
+    verification_cases: list[AnalysisElementRef]
+    views: list[AnalysisElementRef]
+    concerns: list[AnalysisElementRef]
+    techniques: list[str]
+    dynamic_behavior_bindings: list[AnalysisDynamicBehaviorBinding]
+    execution_context: AnalysisExecutionContext
+    execution_plan: AnalysisExecutionPlan
+    expected_artifacts: list[AnalysisExpectedArtifact]
+    readiness: str
+    readiness_diagnostics: list[AnalysisReadinessDiagnostic]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisSpec":
+        return cls(
+            case_ref=AnalysisElementRef.from_json(
+                _object_field(data, "case_ref", "caseRef")
+            ),
+            model_revision=str(_field(data, "model_revision", "modelRevision", "")),
+            subjects=_analysis_element_refs(data, "subjects", "subjects"),
+            inputs=_analysis_element_refs(data, "inputs", "inputs"),
+            assumptions=_analysis_element_refs(data, "assumptions", "assumptions"),
+            objectives=_analysis_element_refs(data, "objectives", "objectives"),
+            calculations=_analysis_element_refs(data, "calculations", "calculations"),
+            constraints=_analysis_element_refs(data, "constraints", "constraints"),
+            requirements=_analysis_element_refs(data, "requirements", "requirements"),
+            verification_cases=_analysis_element_refs(
+                data, "verification_cases", "verificationCases"
+            ),
+            views=_analysis_element_refs(data, "views", "views"),
+            concerns=_analysis_element_refs(data, "concerns", "concerns"),
+            techniques=[str(value) for value in data.get("techniques", [])],
+            dynamic_behavior_bindings=[
+                AnalysisDynamicBehaviorBinding.from_json(item)
+                for item in _list_field(
+                    data, "dynamic_behavior_bindings", "dynamicBehaviorBindings"
+                )
+                if isinstance(item, dict)
+            ],
+            execution_context=AnalysisExecutionContext.from_json(
+                _object_field(data, "execution_context", "executionContext")
+            ),
+            execution_plan=AnalysisExecutionPlan.from_json(
+                _object_field(data, "execution_plan", "executionPlan")
+            ),
+            expected_artifacts=[
+                AnalysisExpectedArtifact.from_json(item)
+                for item in _list_field(data, "expected_artifacts", "expectedArtifacts")
+                if isinstance(item, dict)
+            ],
+            readiness=str(data.get("readiness", "")),
+            readiness_diagnostics=[
+                AnalysisReadinessDiagnostic.from_json(item)
+                for item in _list_field(
+                    data, "readiness_diagnostics", "readinessDiagnostics"
+                )
+                if isinstance(item, dict)
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class SemanticElementRef:
+    element_id: str
+    qualified_name: str | None
+    label: str | None
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "SemanticElementRef":
+        return cls(
+            element_id=str(_field(data, "element_id", "elementId", "")),
+            qualified_name=_field(data, "qualified_name", "qualifiedName"),
+            label=data.get("label"),
+        )
+
+
+@dataclass(frozen=True)
+class SemanticArtifact:
+    id: str
+    kind: str
+    schema: str
+    digest: str
+    element_refs: list[SemanticElementRef]
+    payload: Any
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "SemanticArtifact":
+        return cls(
+            id=str(data.get("id", "")),
+            kind=str(data.get("kind", "")),
+            schema=str(data.get("schema", "")),
+            digest=str(data.get("digest", "")),
+            element_refs=[
+                SemanticElementRef.from_json(item)
+                for item in _list_field(data, "element_refs", "elementRefs")
+                if isinstance(item, dict)
+            ],
+            payload=data.get("payload"),
+        )
+
+
+@dataclass(frozen=True)
+class EvidenceNode:
+    id: str
+    kind: str
+    label: str
+    element_refs: list[SemanticElementRef]
+    properties: JsonObject
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "EvidenceNode":
+        return cls(
+            id=str(data.get("id", "")),
+            kind=str(data.get("kind", "")),
+            label=str(data.get("label", "")),
+            element_refs=[
+                SemanticElementRef.from_json(item)
+                for item in _list_field(data, "element_refs", "elementRefs")
+                if isinstance(item, dict)
+            ],
+            properties=_object_field(data, "properties", "properties"),
+        )
+
+
+@dataclass(frozen=True)
+class EvidenceEdge:
+    source_id: str
+    target_id: str
+    relation: str
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "EvidenceEdge":
+        return cls(
+            source_id=str(_field(data, "source_id", "sourceId", "")),
+            target_id=str(_field(data, "target_id", "targetId", "")),
+            relation=str(data.get("relation", "")),
+        )
+
+
+@dataclass(frozen=True)
+class EvidenceGraph:
+    nodes: list[EvidenceNode]
+    edges: list[EvidenceEdge]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "EvidenceGraph":
+        return cls(
+            nodes=[
+                EvidenceNode.from_json(item)
+                for item in _list_field(data, "nodes", "nodes")
+                if isinstance(item, dict)
+            ],
+            edges=[
+                EvidenceEdge.from_json(item)
+                for item in _list_field(data, "edges", "edges")
+                if isinstance(item, dict)
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class SemanticDiagnostic:
+    code: str
+    severity: str
+    message: str
+    element: SemanticElementRef | None
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "SemanticDiagnostic":
+        raw_element = data.get("element")
+        return cls(
+            code=str(data.get("code", "")),
+            severity=str(data.get("severity", "")),
+            message=str(data.get("message", "")),
+            element=SemanticElementRef.from_json(raw_element)
+            if isinstance(raw_element, dict)
+            else None,
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisRunReport:
+    run_id: str
+    capability_id: str
+    status: str
+    target: JsonObject
+    insights: list[JsonObject]
+    artifacts: list[SemanticArtifact]
+    evidence: EvidenceGraph
+    diagnostics: list[SemanticDiagnostic]
+    limitations: list[str]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisRunReport":
+        return cls(
+            run_id=str(_field(data, "run_id", "runId", "")),
+            capability_id=str(_field(data, "capability_id", "capabilityId", "")),
+            status=str(data.get("status", "")),
+            target=_object_field(data, "target", "target"),
+            insights=[
+                dict(item)
+                for item in _list_field(data, "insights", "insights")
+                if isinstance(item, dict)
+            ],
+            artifacts=[
+                SemanticArtifact.from_json(item)
+                for item in _list_field(data, "artifacts", "artifacts")
+                if isinstance(item, dict)
+            ],
+            evidence=EvidenceGraph.from_json(
+                _object_field(data, "evidence", "evidence")
+            ),
+            diagnostics=[
+                SemanticDiagnostic.from_json(item)
+                for item in _list_field(data, "diagnostics", "diagnostics")
+                if isinstance(item, dict)
+            ],
+            limitations=[str(value) for value in data.get("limitations", [])],
+        )
+
+    def artifact(self, kind: str) -> SemanticArtifact:
+        for artifact in self.artifacts:
+            if artifact.kind == kind:
+                return artifact
+        raise KeyError(f"No analysis artifact of kind {kind!r}")
+
+    def simulation_trace(self) -> "SimulationTrace":
+        artifact = self.artifact("simulation_trace")
+        if not isinstance(artifact.payload, dict):
+            raise ValueError("simulation_trace artifact payload is not an object")
+        return SimulationTrace.from_json(artifact.payload)
+
+    def constraint_summary(self) -> JsonObject:
+        artifact = self.artifact("constraint_analysis_summary")
+        if not isinstance(artifact.payload, dict):
+            raise ValueError("constraint_analysis_summary artifact payload is not an object")
+        return dict(artifact.payload)
+
+    def activity_summary(self) -> JsonObject:
+        artifact = self.artifact("activity_execution_summary")
+        if not isinstance(artifact.payload, dict):
+            raise ValueError("activity_execution_summary artifact payload is not an object")
+        return dict(artifact.payload)
+
+
+def _analysis_element_refs(
+    data: JsonObject, snake_name: str, camel_name: str
+) -> list[AnalysisElementRef]:
+    return [
+        AnalysisElementRef.from_json(item)
+        for item in _list_field(data, snake_name, camel_name)
+        if isinstance(item, dict)
+    ]
 
 
 @dataclass(frozen=True)

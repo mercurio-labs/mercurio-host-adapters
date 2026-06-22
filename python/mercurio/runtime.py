@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 
 from .backend import Mercurio
-from .models import AnalysisCaseInfo, JsonObject, PartRef, SimulationTrace
+from .models import (
+    AnalysisCaseInfo,
+    AnalysisRunReport,
+    AnalysisSpec,
+    JsonObject,
+    PartRef,
+    SimulationTrace,
+)
 from .project import MercurioProject
 from .session import (
     CellRunReport,
@@ -105,11 +112,52 @@ class Model:
             return workspace.list_analysis_cases()
         return self._project.list_analysis_cases()
 
-    def run_analysis(self, case_id: str) -> SimulationTrace:
+    def analysis_specs(self) -> list[AnalysisSpec]:
         workspace = getattr(self, "_workspace", None)
         if workspace is not None:
-            return workspace.run_analysis(case_id)
-        return self._project.run_analysis(case_id)
+            if hasattr(workspace, "analysis_specs_json"):
+                return [
+                    AnalysisSpec.from_json(item)
+                    for item in _json_object_list(
+                        workspace.analysis_specs_json(), "analysis specs"
+                    )
+                ]
+            raise RuntimeError(
+                "analysis specs are not available in this native workspace; "
+                "open with an HTTP sidecar executable"
+            )
+        return self._project.list_analysis_specs()
+
+    def analysis_case_spec(self, name_or_id: str) -> AnalysisSpec:
+        for spec in self.analysis_specs():
+            if (
+                spec.case_ref.element_id == name_or_id
+                or spec.case_ref.label == name_or_id
+            ):
+                return spec
+        raise KeyError(f"No analysis spec with name or id {name_or_id!r}")
+
+    def run_analysis_report(
+        self, case_id: str, *, run_id: str | None = None
+    ) -> AnalysisRunReport:
+        workspace = getattr(self, "_workspace", None)
+        effective_run_id = run_id or "python.analysis_case"
+        if workspace is not None:
+            if hasattr(workspace, "analysis_run_json"):
+                return AnalysisRunReport.from_json(
+                    _json_object(
+                        workspace.analysis_run_json(case_id, effective_run_id),
+                        "analysis run report",
+                    )
+                )
+            raise RuntimeError(
+                "analysis execution is not available in this native workspace; "
+                "open with an HTTP sidecar executable"
+            )
+        return self._project.run_analysis_report(case_id, run_id=run_id)
+
+    def run_analysis(self, case_id: str) -> SimulationTrace:
+        return self.run_analysis_report(case_id).simulation_trace()
 
     def model_metadata(self) -> JsonObject:
         workspace = getattr(self, "_workspace", None)

@@ -11,6 +11,59 @@ with mercurio.open("C:/models/demo") as model:
     graph = model.raw.graph()
 ```
 
+## Analysis Specs And Simulation
+
+`AnalysisSpec` is the inspectable plan for an analysis case. It lets Python code
+check the subject, required techniques, dynamic behavior bindings, expected
+artifacts, execution plan, and readiness diagnostics before running anything:
+
+```python
+import mercurio
+
+with mercurio.open("C:/models/demo") as model:
+    spec = model.analysis_case_spec("PrintSequence")
+
+    assert spec.readiness in {"ready", "partial"}
+    assert spec.execution_plan.steps[0].kind == "dynamic_behavior"
+
+    for binding in spec.dynamic_behavior_bindings:
+        print(binding.subject.label, binding.kind, binding.behavior.label)
+
+    report = model.run_analysis_report(
+        spec.case_ref.element_id,
+        run_id="notebook.print-sequence",
+    )
+    trace = report.simulation_trace()
+    summary = report.constraint_summary()  # when the case performs static checks
+    activity = report.activity_summary()  # when the case binds activity behavior
+```
+
+State-machine bindings are executable by the current simulation path. Activity
+bindings are projected in the same `dynamic_behavior_bindings` list and report a
+readiness warning until activity execution is implemented.
+
+Calculation, constraint evaluation, and verification analysis cases return the
+same `AnalysisRunReport` shape with a `constraint_analysis_summary` artifact.
+`constraint_summary()` exposes that payload for notebooks and tests.
+Dynamic simulation traces also include supported constraint-derived values as
+ordinary trace channels when the model defines simple path-target equality
+constraints.
+State `do_behavior` can also drive precomputed lookup-table curves; those
+values appear in `simulation_trace()` as ordinary channels with source
+`lookup_table`.
+Activity-bound dynamic behavior cases return an `activity_execution_summary`
+artifact as soon as activity behavior is projected. Simple deterministic
+action/succession DAGs report completed execution steps; unsupported activity
+semantics report partial status with diagnostics.
+
+`run_analysis()` remains available as a convenience when the caller only wants
+the simulation trace:
+
+```python
+with mercurio.open("C:/models/demo") as model:
+    trace = model.run_analysis("PrintSequence")
+```
+
 ## Source-backed Project Sessions
 
 For authoring, small edits, semantic queries, variants, and future simulation

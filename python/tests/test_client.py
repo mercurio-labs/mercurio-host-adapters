@@ -9,7 +9,13 @@ from urllib.parse import parse_qs, urlparse
 
 from mercurio.backend import Mercurio
 from mercurio.errors import MercurioBackendError
-from mercurio.models import AnalysisCaseInfo, PartRef, SimulationTrace
+from mercurio.models import (
+    AnalysisCaseInfo,
+    AnalysisRunReport,
+    AnalysisSpec,
+    PartRef,
+    SimulationTrace,
+)
 from mercurio.runtime import Model, RawWorkspace
 
 
@@ -125,6 +131,73 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                 [{"id": "analysis.PrintSequence", "label": "PrintSequence", "subjectCount": 1}]
             )
             return
+        if parsed.path.endswith("/analysis/specs"):
+            self.requests.append({"method": "GET", "path": parsed.path})
+            self.write_json(
+                [
+                    {
+                        "caseRef": {
+                            "elementId": "analysis.PrintSequence",
+                            "kind": "AnalysisCaseUsage",
+                            "label": "PrintSequence",
+                        },
+                        "modelRevision": "demo-revision",
+                        "subjects": [
+                            {
+                                "elementId": "part.Printer",
+                                "kind": "PartUsage",
+                                "label": "printer",
+                            }
+                        ],
+                        "techniques": ["dynamic_behavior", "constraint_evaluation"],
+                        "dynamicBehaviorBindings": [
+                            {
+                                "subject": {
+                                    "elementId": "part.Printer",
+                                    "kind": "PartUsage",
+                                    "label": "printer",
+                                },
+                                "behavior": {
+                                    "elementId": "state.Printer.lifecycle",
+                                    "kind": "StateUsage",
+                                    "label": "lifecycle",
+                                },
+                                "kind": "state_machine",
+                            }
+                        ],
+                        "executionContext": {
+                            "initialValues": {
+                                "part.Printer": {"bed_temperature": 22.0}
+                            },
+                            "clock": {"maxSteps": 12, "fixedStepS": 1.0},
+                        },
+                        "executionPlan": {
+                            "steps": [
+                                {
+                                    "kind": "dynamic_behavior",
+                                    "label": "Execute dynamic behavior",
+                                    "techniques": ["dynamic_behavior"],
+                                    "elements": [
+                                        {
+                                            "elementId": "part.Printer.lifecycle",
+                                            "kind": "StateUsage",
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                        "expectedArtifacts": [
+                            {
+                                "kind": "simulation_trace",
+                                "schema": "mercurio.simulation.trace.v1",
+                            }
+                        ],
+                        "readiness": "ready",
+                        "readinessDiagnostics": [],
+                    }
+                ]
+            )
+            return
         if parsed.path.endswith("/editor/file"):
             query = parse_qs(parsed.query)
             self.write_json({"path": query["path"][0], "content": "package Demo {}"})
@@ -161,6 +234,97 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
             return
         if parsed.path.endswith("/editor/parse"):
             self.write_json({"ok": True, "diagnostics": [], "element_count": 1})
+            return
+        if parsed.path.endswith("/analysis/cases/run"):
+            trace = {
+                "scenario_id": payload["id"],
+                "subject_id": "bed",
+                "channels": [
+                    {
+                        "id": "bed.temperature",
+                        "unit": "C",
+                        "source": "rate_effect",
+                    },
+                ],
+                "status": "completed",
+                "timeline": [
+                    {
+                        "t": 0.0,
+                        "states": {"bed": ["Cold"]},
+                        "values": {"bed|temperature": 22.0},
+                        "events": [],
+                    },
+                    {
+                        "t": 5.0,
+                        "states": {"bed": ["Heating"]},
+                        "values": {"bed|temperature": 33.5},
+                        "events": [],
+                    },
+                ],
+            }
+            run_id = payload.get("runId", "api.analysis_case")
+            self.write_json(
+                {
+                    "run_id": run_id,
+                    "capability_id": "sysml.behavior.dynamic",
+                    "status": "passed",
+                    "target": {"kind": "element", "element_id": payload["id"]},
+                    "artifacts": [
+                        {
+                            "id": f"artifact.{run_id}.simulation_trace",
+                            "kind": "simulation_trace",
+                            "schema": "mercurio.simulation.trace.v1",
+                            "digest": "sha256:demo",
+                            "element_refs": [
+                                {
+                                    "element_id": payload["id"],
+                                    "label": "PrintSequence",
+                                }
+                            ],
+                            "payload": trace,
+                        },
+                        {
+                            "id": f"artifact.{run_id}.constraints",
+                            "kind": "constraint_analysis_summary",
+                            "schema": "mercurio.capability.sysml_constraint_analysis.v1",
+                            "digest": "sha256:constraints",
+                            "payload": {
+                                "schema": "mercurio.capability.sysml_constraint_analysis.v1",
+                                "constraintCount": 1,
+                                "requirementCheckCount": 1,
+                                "result": {
+                                    "requirements": [
+                                        {
+                                            "id": "req.maxMass",
+                                            "status": "satisfied",
+                                            "margin": 5.0,
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ],
+                    "evidence": {
+                        "nodes": [
+                            {
+                                "id": f"evidence.{run_id}",
+                                "kind": "analysis_run",
+                                "label": "Simulation analysis case",
+                                "element_refs": [
+                                    {
+                                        "element_id": payload["id"],
+                                        "label": "PrintSequence",
+                                    }
+                                ],
+                                "properties": {"scenario_id": payload["id"]},
+                            }
+                        ],
+                        "edges": [],
+                    },
+                    "diagnostics": [],
+                    "limitations": [],
+                }
+            )
             return
         if parsed.path.endswith("/simulation/run-analysis"):
             self.write_json(
@@ -365,8 +529,280 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(info.label, "PrintSequence")
         self.assertEqual(info.subject_count, 3)
 
+    def test_analysis_spec_from_json(self) -> None:
+        spec = AnalysisSpec.from_json(
+            {
+                "caseRef": {
+                    "elementId": "analysis.PrintSequence",
+                    "kind": "AnalysisCaseUsage",
+                    "label": "PrintSequence",
+                },
+                "modelRevision": "demo-revision",
+                "subjects": [{"elementId": "part.Printer", "kind": "PartUsage"}],
+                "techniques": ["dynamic_behavior"],
+                "dynamicBehaviorBindings": [
+                    {
+                        "subject": {"elementId": "part.Printer", "kind": "PartUsage"},
+                        "behavior": {
+                            "elementId": "state.Printer.lifecycle",
+                            "kind": "StateUsage",
+                            "label": "lifecycle",
+                        },
+                        "kind": "state_machine",
+                    }
+                ],
+                "executionContext": {
+                    "initialValues": {"part.Printer": {"bed_temperature": 22.0}},
+                    "clock": {"maxSteps": 12},
+                },
+                "executionPlan": {
+                    "steps": [
+                        {
+                            "kind": "dynamic_behavior",
+                            "label": "Execute dynamic behavior",
+                        }
+                    ]
+                },
+                "expectedArtifacts": [
+                    {
+                        "kind": "simulation_trace",
+                        "schema": "mercurio.simulation.trace.v1",
+                    }
+                ],
+                "readiness": "ready",
+            }
+        )
+
+        self.assertEqual(spec.case_ref.label, "PrintSequence")
+        self.assertEqual(spec.model_revision, "demo-revision")
+        self.assertEqual(spec.execution_context.clock.max_steps, 12)
+        self.assertEqual(
+            spec.execution_context.initial_values["part.Printer"]["bed_temperature"],
+            22.0,
+        )
+        self.assertEqual(spec.dynamic_behavior_bindings[0].kind, "state_machine")
+        self.assertEqual(
+            spec.dynamic_behavior_bindings[0].behavior.label,
+            "lifecycle",
+        )
+        self.assertEqual(spec.execution_plan.steps[0].kind, "dynamic_behavior")
+        self.assertEqual(spec.expected_artifacts[0].kind, "simulation_trace")
+
+    def test_analysis_run_report_from_json(self) -> None:
+        report = AnalysisRunReport.from_json(
+            {
+                "run_id": "pytest.run",
+                "capability_id": "sysml.behavior.dynamic",
+                "status": "passed",
+                "target": {
+                    "kind": "element",
+                    "element_id": "analysis.PrintSequence",
+                },
+                "artifacts": [
+                    {
+                        "id": "artifact.pytest.run.simulation_trace",
+                        "kind": "simulation_trace",
+                        "schema": "mercurio.simulation.trace.v1",
+                        "digest": "sha256:demo",
+                        "element_refs": [
+                            {
+                                "element_id": "analysis.PrintSequence",
+                                "label": "PrintSequence",
+                            }
+                        ],
+                        "payload": {
+                            "scenario_id": "analysis.PrintSequence",
+                            "subject_id": "bed",
+                            "channels": [
+                                {
+                                    "id": "bed.temperature",
+                                    "unit": "C",
+                                    "source": "rate_effect",
+                                }
+                            ],
+                            "status": "completed",
+                            "timeline": [
+                                {
+                                    "t": 0.0,
+                                    "states": {"bed": ["Cold"]},
+                                    "values": {"bed|temperature": 22.0},
+                                    "events": [],
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "id": "artifact.pytest.run.constraints",
+                        "kind": "constraint_analysis_summary",
+                        "schema": "mercurio.capability.sysml_constraint_analysis.v1",
+                        "digest": "sha256:constraint-demo",
+                        "element_refs": [
+                            {
+                                "element_id": "req.maxMass",
+                                "label": "maxMass",
+                            }
+                        ],
+                        "payload": {
+                            "schema": "mercurio.capability.sysml_constraint_analysis.v1",
+                            "analysisScope": "authored_model",
+                            "constraintCount": 1,
+                            "requirementCheckCount": 1,
+                            "variableCount": 4,
+                            "diagnosticCount": 0,
+                            "result": {
+                                "constraints": [
+                                    {
+                                        "id": "constraint.totalMass",
+                                        "status": "satisfied",
+                                    }
+                                ],
+                                "requirements": [
+                                    {
+                                        "id": "req.maxMass",
+                                        "status": "satisfied",
+                                    }
+                                ],
+                                "variables": [
+                                    {"id": "totalMass", "value": 120.0},
+                                    {"id": "maxMass", "value": 125.0},
+                                ],
+                                "diagnostics": [],
+                            },
+                        },
+                    },
+                    {
+                        "id": "artifact.pytest.run.activity",
+                        "kind": "activity_execution_summary",
+                        "schema": "mercurio.analysis.activity_execution_summary.v1",
+                        "digest": "sha256:activity-demo",
+                        "element_refs": [
+                            {
+                                "element_id": "action.Printer.warmup",
+                                "label": "warmup",
+                            }
+                        ],
+                        "payload": {
+                            "schema": "mercurio.analysis.activity_execution_summary.v1",
+                            "analysisCase": {
+                                "elementId": "analysis.PrintSequence",
+                                "kind": "AnalysisCaseUsage",
+                                "label": "PrintSequence",
+                            },
+                            "bindingCount": 1,
+                            "status": "passed",
+                            "executionState": "completed",
+                            "bindings": [
+                                {
+                                    "subject": {
+                                        "elementId": "part.Printer",
+                                        "kind": "PartUsage",
+                                        "label": "printer",
+                                    },
+                                    "behavior": {
+                                        "elementId": "action.Printer.warmup",
+                                        "kind": "ActionUsage",
+                                        "label": "warmup",
+                                    },
+                                    "kind": "activity",
+                                    "status": "passed",
+                                    "executionState": "completed",
+                                    "nodeCount": 2,
+                                    "edgeCount": 1,
+                                    "steps": [
+                                        {
+                                            "index": 0,
+                                            "nodes": [
+                                                {
+                                                    "elementId": "action.Printer.warmup.home",
+                                                    "kind": "ActionUsage",
+                                                    "label": "home",
+                                                }
+                                            ],
+                                        },
+                                        {
+                                            "index": 1,
+                                            "nodes": [
+                                                {
+                                                    "elementId": "action.Printer.warmup.heat",
+                                                    "kind": "ActionUsage",
+                                                    "label": "heatBed",
+                                                }
+                                            ],
+                                        },
+                                    ],
+                                    "flows": [
+                                        {
+                                            "id": "flow.Printer.warmup.home_to_heat",
+                                            "source": "action.Printer.warmup.home",
+                                            "target": "action.Printer.warmup.heat",
+                                        }
+                                    ],
+                                    "blockedNodes": [],
+                                }
+                            ],
+                        },
+                    },
+                ],
+                "evidence": {
+                    "nodes": [
+                        {
+                            "id": "evidence.pytest.run",
+                            "kind": "analysis_run",
+                            "label": "Simulation analysis case",
+                            "element_refs": [
+                                {
+                                    "element_id": "analysis.PrintSequence",
+                                    "label": "PrintSequence",
+                                }
+                            ],
+                            "properties": {
+                                "scenario_id": "analysis.PrintSequence",
+                            },
+                        }
+                    ],
+                    "edges": [],
+                },
+            }
+        )
+
+        self.assertEqual(report.run_id, "pytest.run")
+        self.assertEqual(report.capability_id, "sysml.behavior.dynamic")
+        self.assertEqual(report.artifacts[0].schema, "mercurio.simulation.trace.v1")
+        self.assertEqual(
+            report.artifacts[0].element_refs[0].element_id,
+            "analysis.PrintSequence",
+        )
+        self.assertEqual(report.evidence.nodes[0].kind, "analysis_run")
+        self.assertEqual(report.simulation_trace().channel("temperature").values, [22.0])
+        self.assertEqual(
+            report.constraint_summary()["result"]["requirements"][0]["status"],
+            "satisfied",
+        )
+        self.assertEqual(
+            report.activity_summary()["bindings"][0]["behavior"]["elementId"],
+            "action.Printer.warmup",
+        )
+        self.assertEqual(
+            report.activity_summary()["bindings"][0]["steps"][1]["nodes"][0][
+                "elementId"
+            ],
+            "action.Printer.warmup.heat",
+        )
+
     def test_project_simulation_methods_use_scoped_routes(self) -> None:
         project = self.backend.open_project("C:/models/demo")
+
+        specs = project.list_analysis_specs()
+        self.assertEqual(specs[0].case_ref.label, "PrintSequence")
+        self.assertEqual(specs[0].execution_plan.steps[0].kind, "dynamic_behavior")
+        self.assertEqual(
+            specs[0].dynamic_behavior_bindings[0].behavior.element_id,
+            "state.Printer.lifecycle",
+        )
+        self.assertEqual(
+            FakeMercurioHandler.requests[-1]["path"],
+            "/api/workspaces/ws_0000000000000001/analysis/specs",
+        )
 
         cases = project.list_analysis_cases()
         self.assertEqual(cases[0].label, "PrintSequence")
@@ -375,13 +811,47 @@ class ClientTests(unittest.TestCase):
             "/api/workspaces/ws_0000000000000001/simulation/analysis-cases",
         )
 
+        report = project.run_analysis_report("analysis.PrintSequence", run_id="pytest.run")
+        self.assertEqual(report.run_id, "pytest.run")
+        self.assertEqual(report.status, "passed")
+        self.assertEqual(report.artifact("simulation_trace").kind, "simulation_trace")
+        self.assertEqual(report.simulation_trace().channel("temperature").values, [22.0, 33.5])
+        self.assertEqual(
+            FakeMercurioHandler.requests[-1]["path"],
+            "/api/workspaces/ws_0000000000000001/analysis/cases/run",
+        )
+        self.assertEqual(FakeMercurioHandler.requests[-1]["json"]["runId"], "pytest.run")
+
         trace = project.run_analysis("analysis.PrintSequence")
         self.assertEqual(trace.status, "completed")
         self.assertEqual(trace.channel("temperature").values, [22.0, 33.5])
         self.assertEqual(
             FakeMercurioHandler.requests[-1]["path"],
-            "/api/workspaces/ws_0000000000000001/simulation/run-analysis",
+            "/api/workspaces/ws_0000000000000001/analysis/cases/run",
         )
+
+    def test_model_runtime_analysis_spec_finder(self) -> None:
+        project = self.backend.open_project("C:/models/demo")
+        rt = Model.__new__(Model)
+        rt._backend = self.backend
+        rt._project = project
+        from mercurio.runtime import RawWorkspace as _RW
+
+        rt.raw = _RW(project)
+
+        spec = rt.analysis_case_spec("PrintSequence")
+        self.assertEqual(spec.case_ref.element_id, "analysis.PrintSequence")
+        self.assertEqual(spec.execution_context.clock.max_steps, 12)
+
+        same_spec = rt.analysis_case_spec("analysis.PrintSequence")
+        self.assertEqual(same_spec.case_ref.label, "PrintSequence")
+
+        report = rt.run_analysis_report("analysis.PrintSequence", run_id="model.run")
+        self.assertEqual(report.run_id, "model.run")
+        self.assertEqual(report.simulation_trace().status, "completed")
+
+        with self.assertRaises(KeyError):
+            rt.analysis_case_spec("missing")
 
     def test_part_ref_tree_structure(self) -> None:
         root = PartRef(

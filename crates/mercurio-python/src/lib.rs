@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+use mercurio_core::runtime::Runtime;
 use mercurio_core::{
     AttributeWritePolicy, AuthoringProject, CapabilityRunStatus, CellKind, CellLanguage,
     CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
@@ -15,9 +16,10 @@ use mercurio_core::{
     generate_python_wrappers, graph_view, l2_explorer_view, library_tree_view,
     metatype_explorer_view, model_metadata_view, resolve_project_descriptor_context, search_view,
 };
+use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
     StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
-    load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
+    list_analysis_specs, load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
     resolve_default_stdlib_locator,
 };
 use mercurio_view_model::{
@@ -160,6 +162,21 @@ impl PyWorkspace {
 
     fn run_cell_json(&self, request_json: &str) -> PyResult<String> {
         run_cell_json(Arc::clone(&self.graph), request_json)
+    }
+
+    fn analysis_specs_json(&self) -> PyResult<String> {
+        let runtime = Runtime::from_graph((*self.graph).clone())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let specs = list_analysis_specs(&runtime);
+        serde_json::to_string(&specs).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
+
+    fn analysis_run_json(&self, case_id: &str, run_id: &str) -> PyResult<String> {
+        let runtime = Runtime::from_graph((*self.graph).clone())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let report = run_sysml_analysis_case(&runtime, case_id, run_id)
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        serde_json::to_string(&report).map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
     fn list_analysis_cases(&self) -> PyResult<Vec<String>> {

@@ -266,6 +266,7 @@ name = "mercurio-python"
 version = "0.1.0"
 dependencies = [
  "mercurio-foundation",
+ "mercurio-simulation",
  "mercurio-sysml",
  "mercurio-view-model",
  "pyo3",

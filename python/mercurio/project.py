@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from .client import MercurioClient
-from .models import JsonObject, PartRef, ProjectInfo, SemanticProjectResult
+from .models import (
+    AnalysisRunReport,
+    JsonObject,
+    PartRef,
+    ProjectInfo,
+    SemanticProjectResult,
+)
 
 
 class MercurioProject:
@@ -200,20 +206,32 @@ class MercurioProject:
         }
         return self.client.post(self._path("/semantic/project/lint"), payload)
 
+    def list_analysis_specs(self) -> list["AnalysisSpec"]:
+        from .models import AnalysisSpec
+
+        data = self.client.get(self._path("/analysis/specs"))
+        return [AnalysisSpec.from_json(item) for item in data]
+
     def list_analysis_cases(self) -> list["AnalysisCaseInfo"]:
         from .models import AnalysisCaseInfo
 
         data = self.client.get(self._path("/simulation/analysis-cases"))
         return [AnalysisCaseInfo.from_json(item) for item in data]
 
-    def run_analysis(self, case_id: str) -> "SimulationTrace":
-        from .models import SimulationTrace
-
+    def run_analysis_report(
+        self, case_id: str, *, run_id: str | None = None
+    ) -> AnalysisRunReport:
+        payload: JsonObject = {"id": case_id}
+        if run_id is not None:
+            payload["runId"] = run_id
         data = self.client.post(
-            self._path("/simulation/run-analysis"),
-            {"id": case_id},
+            self._path("/analysis/cases/run"),
+            payload,
         )
-        return SimulationTrace.from_json(data)
+        return AnalysisRunReport.from_json(data)
+
+    def run_analysis(self, case_id: str) -> "SimulationTrace":
+        return self.run_analysis_report(case_id).simulation_trace()
 
     def parts(self) -> list[PartRef]:
         items = self.client.get(self._path("/parts"))
