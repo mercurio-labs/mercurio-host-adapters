@@ -653,11 +653,24 @@ class SimulationTrace:
         for entry in self._timeline:
             raw_values = entry.get("values", {})
             match = None
-            for key, value in raw_values.items():
-                normalized = str(key).replace("|", ".")
-                if normalized == channel_id or normalized.endswith(f".{channel_id}"):
-                    match = value
-                    break
+            if isinstance(raw_values, dict):
+                for key, value in raw_values.items():
+                    normalized = str(key).replace("|", ".")
+                    if normalized == channel_id or normalized.endswith(f".{channel_id}"):
+                        match = value
+                        break
+            elif isinstance(raw_values, list):
+                for sample in raw_values:
+                    if not isinstance(sample, dict):
+                        continue
+                    subject = str(sample.get("subject", "")).replace("|", ".")
+                    feature = str(sample.get("feature", "")).replace("|", ".")
+                    if not feature:
+                        continue
+                    normalized = f"{subject}.{feature}" if subject else feature
+                    if feature == channel_id or normalized == channel_id or normalized.endswith(f".{channel_id}"):
+                        match = sample.get("value")
+                        break
             if match is not None:
                 times.append(float(entry.get("t", 0.0)))
                 values.append(match)

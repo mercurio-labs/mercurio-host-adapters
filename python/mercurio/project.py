@@ -215,7 +215,7 @@ class MercurioProject:
     def list_analysis_cases(self) -> list["AnalysisCaseInfo"]:
         from .models import AnalysisCaseInfo
 
-        data = self.client.get(self._path("/simulation/analysis-cases"))
+        data = self.client.get(self._path("/analysis/cases"))
         return [AnalysisCaseInfo.from_json(item) for item in data]
 
     def run_analysis_report(

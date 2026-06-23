@@ -64,6 +64,16 @@ with mercurio.open("C:/models/demo") as model:
     trace = model.run_analysis("PrintSequence")
 ```
 
+For a fuller end-to-end example, see
+[`examples/analysis_execution_showcase.py`](examples/analysis_execution_showcase.py).
+It inspects the analysis spec, runs the case, prints simulation channels,
+state-machine state timelines, constraint and activity summaries, rate and
+lookup-table channels, evidence, diagnostics, and optional harness checks:
+
+```powershell
+python examples/analysis_execution_showcase.py C:/models/demo --case PrintSequence --subject bed --require-passed
+```
+
 ## Source-backed Project Sessions
 
 For authoring, small edits, semantic queries, variants, and future simulation
