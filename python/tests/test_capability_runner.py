@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from mercurio_capability import CapabilityRequest, CapabilityRunner, Finding, ReasoningReport
+from mercurio.capability import capability, run
 
 
 DESCRIPTOR = {
@@ -53,6 +54,10 @@ def captured_stdio(input_payload: object) -> Iterator[io.StringIO]:
 
 
 class CapabilityRunnerTests(unittest.TestCase):
+    def test_main_package_capability_facade_reexports_runner_helpers(self) -> None:
+        self.assertIs(capability, CapabilityRunner.capability)
+        self.assertIs(run, CapabilityRunner.run)
+
     def test_runner_writes_reasoning_run_response(self) -> None:
         def analyze(request: CapabilityRequest) -> ReasoningReport:
             self.assertEqual(request.param("mode"), "strict")

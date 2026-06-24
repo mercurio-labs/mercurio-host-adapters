@@ -38,6 +38,7 @@ class LabModel:
     _params: dict[str, Any] = field(default_factory=dict, repr=False)
     _parent_id: str | None = field(default=None, repr=False)
     _workspace: str = field(default="", repr=False)
+    _model: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _emit({
@@ -71,10 +72,75 @@ class LabModel:
         """Escape hatch: direct access to the parameter dict."""
         return self._params
 
+    def semantic_model(self):
+        """Open the active workspace through the normal Mercurio model facade."""
+        if self._model is None:
+            if not self._workspace:
+                raise RuntimeError("LabModel has no workspace path")
+            self._model = _open_workspace_model(self._workspace)
+        return self._model
+
+    def check_semantic_legality(
+        self,
+        operation: dict[str, Any],
+        *,
+        facts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return self.semantic_model().check_semantic_legality(operation, facts=facts)
+
+    def semantic_next_actions(
+        self,
+        element_kind: str,
+        *,
+        element: str | None = None,
+        candidate_target_kinds: list[str] | None = None,
+        candidate_attributes: list[str] | None = None,
+        facts: list[dict[str, Any]] | None = None,
+        max_actions: int | None = None,
+    ) -> dict[str, Any]:
+        return self.semantic_model().semantic_next_actions(
+            element_kind,
+            element=element,
+            candidate_target_kinds=candidate_target_kinds,
+            candidate_attributes=candidate_attributes,
+            facts=facts,
+            max_actions=max_actions,
+        )
+
+    def can_contain(self, container_kind: str, child_kind: str) -> dict[str, Any]:
+        return self.semantic_model().can_contain(container_kind, child_kind)
+
+    def can_specialize(self, source_kind: str, target_kind: str) -> dict[str, Any]:
+        return self.semantic_model().can_specialize(source_kind, target_kind)
+
+    def can_type_usage(self, usage_kind: str, definition_kind: str) -> dict[str, Any]:
+        return self.semantic_model().can_type_usage(usage_kind, definition_kind)
+
+    def can_relate(
+        self,
+        relationship_kind: str,
+        source_kind: str,
+        target_kind: str,
+    ) -> dict[str, Any]:
+        return self.semantic_model().can_relate(
+            relationship_kind,
+            source_kind,
+            target_kind,
+        )
+
+    def can_write_attribute(self, kind: str, attribute: str) -> dict[str, Any]:
+        return self.semantic_model().can_write_attribute(kind, attribute)
+
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v!r}" for k, v in self._params.items())
         suffix = f"[{params_str}]" if params_str else ""
         return f"LabModel({self.label!r}{suffix})"
+
+
+def _open_workspace_model(path: str):
+    from . import open as open_model
+
+    return open_model(path)
 
 
 def open_lab(path: str | None = None, *, label: str | None = None) -> LabModel:

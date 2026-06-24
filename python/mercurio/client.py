@@ -59,6 +59,39 @@ class MercurioClient:
     def delete_workspace(self, workspace_id: str) -> None:
         self.delete_project(workspace_id)
 
+    def check_semantic_legality(
+        self,
+        operation: JsonObject,
+        *,
+        facts: list[JsonObject] | None = None,
+    ) -> JsonObject:
+        return self.post(
+            "/api/semantic/legality/check",
+            {"operation": operation, "facts": list(facts or ())},
+        )
+
+    def semantic_next_actions(
+        self,
+        element_kind: str,
+        *,
+        element: str | None = None,
+        candidate_target_kinds: list[str] | None = None,
+        candidate_attributes: list[str] | None = None,
+        facts: list[JsonObject] | None = None,
+        max_actions: int | None = None,
+    ) -> JsonObject:
+        payload: JsonObject = {
+            "elementKind": element_kind,
+            "candidateTargetKinds": list(candidate_target_kinds or ()),
+            "candidateAttributes": list(candidate_attributes or ()),
+            "facts": list(facts or ()),
+        }
+        if element is not None:
+            payload["element"] = {"qualified_name": element}
+        if max_actions is not None:
+            payload["maxActions"] = max_actions
+        return self.post("/api/semantic/next-actions", payload)
+
     def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, query=query)
 

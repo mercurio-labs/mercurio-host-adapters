@@ -136,6 +136,90 @@ class MercurioProject:
     def workspace_session(self) -> JsonObject:
         return self.client.get(self._path("/semantic/workspace-session"))
 
+    def check_semantic_legality(
+        self,
+        operation: JsonObject,
+        *,
+        facts: list[JsonObject] | None = None,
+    ) -> JsonObject:
+        return self.client.post(
+            self._path("/semantic/legality/check"),
+            {"operation": operation, "facts": list(facts or ())},
+        )
+
+    def semantic_next_actions(
+        self,
+        element_kind: str,
+        *,
+        element: str | None = None,
+        candidate_target_kinds: list[str] | None = None,
+        candidate_attributes: list[str] | None = None,
+        facts: list[JsonObject] | None = None,
+        max_actions: int | None = None,
+    ) -> JsonObject:
+        payload: JsonObject = {
+            "elementKind": element_kind,
+            "candidateTargetKinds": list(candidate_target_kinds or ()),
+            "candidateAttributes": list(candidate_attributes or ()),
+            "facts": list(facts or ()),
+        }
+        if element is not None:
+            payload["element"] = {"qualified_name": element}
+        if max_actions is not None:
+            payload["maxActions"] = max_actions
+        return self.client.post(self._path("/semantic/next-actions"), payload)
+
+    def can_contain(self, container_kind: str, child_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "containment",
+                "containerKind": container_kind,
+                "childKind": child_kind,
+            }
+        )
+
+    def can_specialize(self, source_kind: str, target_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "specialization",
+                "sourceKind": source_kind,
+                "targetKind": target_kind,
+            }
+        )
+
+    def can_type_usage(self, usage_kind: str, definition_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "usageTyping",
+                "usageKind": usage_kind,
+                "definitionKind": definition_kind,
+            }
+        )
+
+    def can_relate(
+        self,
+        relationship_kind: str,
+        source_kind: str,
+        target_kind: str,
+    ) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "relationship",
+                "relationshipKind": relationship_kind,
+                "sourceKind": source_kind,
+                "targetKind": target_kind,
+            }
+        )
+
+    def can_write_attribute(self, kind: str, attribute: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "attributeWrite",
+                "elementKind": kind,
+                "attribute": attribute,
+            }
+        )
+
     def run_cell(self, request: JsonObject) -> JsonObject:
         return self.client.post(self._path("/session/cells/run"), request)
 

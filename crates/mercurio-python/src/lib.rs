@@ -10,9 +10,10 @@ use mercurio_core::{
     DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, ForkElement, Graph,
     GraphScope, KirDocument, L2ExplorerRequestDto, MetamodelAttributeRegistry,
     MetatypeExplorerRequestDto, ModelFork, ModelSession, ModelWorkspace, Mutation,
-    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticMutation,
-    SemanticTransaction, SessionError, TransactionOperation, WorkspaceSnapshot, WriteBackMode,
-    WriteBackResult, collect_specialization_ancestors, default_language_profile, element_metatype,
+    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticLegalityRequest,
+    SemanticMutation, SemanticNextActionsRequest, SemanticTransaction, SessionError,
+    TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
+    collect_specialization_ancestors, default_language_profile, element_metatype,
     generate_python_wrappers, graph_view, l2_explorer_view, library_tree_view,
     metatype_explorer_view, model_metadata_view, resolve_project_descriptor_context, search_view,
 };
@@ -20,7 +21,8 @@ use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
     StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
     list_analysis_specs, load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
-    resolve_default_stdlib_locator,
+    resolve_default_stdlib_locator, sysml_semantic_legality_service,
+    sysml_semantic_next_actions_service,
 };
 use mercurio_view_model::{
     ElementDetailsDto, PartDto, element_details_from_graph, parts_from_graph,
@@ -146,6 +148,20 @@ impl PyWorkspace {
 
     fn library_tree_json(&self) -> PyResult<String> {
         library_tree_json(&self.graph)
+    }
+
+    fn semantic_legality_json(&self, request_json: &str) -> PyResult<String> {
+        let request: SemanticLegalityRequest = serde_json::from_str(request_json)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let report = sysml_semantic_legality_service().check(request);
+        serde_json::to_string(&report).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
+
+    fn semantic_next_actions_json(&self, request_json: &str) -> PyResult<String> {
+        let request: SemanticNextActionsRequest = serde_json::from_str(request_json)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let report = sysml_semantic_next_actions_service().next_actions(request);
+        serde_json::to_string(&report).map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
     fn compile(&self) -> PyResult<PySemanticModel> {

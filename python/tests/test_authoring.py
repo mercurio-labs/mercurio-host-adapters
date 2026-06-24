@@ -136,6 +136,33 @@ class AuthoringCreateTests(unittest.TestCase):
             native.calls,
         )
 
+    def test_release_facade_creates_project_and_model_declarations(self) -> None:
+        import mercurio
+        from mercurio import model
+
+        project = mercurio.create(package="Demo", stdlib=False)
+        project.add(
+            model.part_def("Vehicle").with_part(
+                model.part("engine").typed("Engine")
+            )
+        )
+
+        native = FakeNativeModelBuilder.instances[-1]
+        self.assertNotIn("builder", mercurio.__all__)
+        self.assertFalse(hasattr(mercurio, "Part"))
+        self.assertIsInstance(project._builder, self.authoring.ModelBuilder)
+        self.assertIn(("add_package", ("model.sysml", "Demo")), native.calls)
+        self.assertIn(
+            ("add_definition", ("Demo", "part", "Vehicle", None)),
+            native.calls,
+        )
+        self.assertIn(
+            ("add_usage", ("Demo.Vehicle", "part", "engine", "Engine", None)),
+            native.calls,
+        )
+        self.assertIsInstance(model.attr("mass"), self.authoring.AttributeUsage)
+        self.assertIsInstance(model.part_def("Wheel"), self.authoring.PartDefinition)
+
     def test_model_builder_forwards_validation_mode(self) -> None:
         self.authoring.ModelBuilder(validate_each_mutation=False)
 

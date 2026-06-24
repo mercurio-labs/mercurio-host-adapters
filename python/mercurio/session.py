@@ -1083,6 +1083,9 @@ class ProjectSession:
     def dsl(self, source: str) -> Any:
         return self.run_cell(source, kind="query", language="mercurio_dsl").result
 
+    def query(self, source: str) -> Any:
+        return self.dsl(source)
+
     def query_dsl(self, source: str) -> Any:
         return self.dsl(source)
 
@@ -1332,6 +1335,9 @@ class Variant:
             language="mercurio_dsl",
             allow_stale_base=allow_stale_base,
         ).result
+
+    def query(self, source: str, *, allow_stale_base: bool = False) -> Any:
+        return self.dsl(source, allow_stale_base=allow_stale_base)
 
     def query_dsl(self, source: str, *, allow_stale_base: bool = False) -> Any:
         return self.dsl(source, allow_stale_base=allow_stale_base)

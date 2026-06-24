@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys as _sys
 from typing import Any
 
 from .builder import ModelBuilder as _NativeModelBuilder
 from .stdlib import StdlibRef
+
+_parent_package = _sys.modules.get(__package__)
+if _parent_package is not None:
+    _parent_package.__dict__.pop("builder", None)
 
 
 _AUTHORABLE_DEFINITION_SUFFIX = "Definition"

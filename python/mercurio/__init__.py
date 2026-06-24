@@ -1,71 +1,31 @@
-"""Public Python API for opening and inspecting Mercurio models."""
+"""Small public Python facade for Mercurio models."""
 
 import os as _os
+from pathlib import Path as _Path
+from typing import Any as _Any
 
 from .runtime import Model
-from .session import (
-    AnalysisQuery,
-    CellRunReport,
-    CompiledModel,
-    PartDefRef,
-    PartUsageRef,
-    ProjectSession,
-    SemanticRef,
-    SemanticQuery,
-    SimulationConfiguration,
-    SmallEdit,
-    StaleSemanticRefError,
-    TradeStudy,
-    TransactionBuilder,
-    Variant,
-    VariantBaseChangedError,
-)
-from .lab import LabModel, parameter_sweep, batch_run
-from . import extensions
+from .session import ProjectSession as _ProjectSession
+from .lab import LabModel as _LabModel
+
+Project = _ProjectSession
 
 __all__ = [
-    "AnalysisQuery",
-    "CellRunReport",
-    "CompiledModel",
-    "LabModel",
     "Model",
-    "PartDefRef",
-    "PartUsageRef",
-    "ProjectSession",
-    "SemanticRef",
-    "SemanticQuery",
-    "SimulationConfiguration",
-    "SmallEdit",
-    "StaleSemanticRefError",
-    "TradeStudy",
-    "TransactionBuilder",
-    "Variant",
-    "VariantBaseChangedError",
-    "batch_run",
-    "extensions",
-    "fork",
+    "Project",
+    "create",
     "open",
-    "open_project",
-    "parameter_sweep",
+    "project",
 ]
 
 __version__ = "0.1.0"
-
-
-def __getattr__(name: str):
-    if name == "ModelBuilder":
-        from .authoring import ModelBuilder
-
-        return ModelBuilder
-    raise AttributeError(name)
-
 
 def open(
     path: str | None = None,
     *,
     executable: str | None = None,
     timeout: float = 60.0,
-) -> "Model | LabModel":
+) -> "Model | _LabModel":
     """Open a model.
 
     In the Lab kernel context (``MERCURIO_LAB_KERNEL=1``), calling
@@ -100,15 +60,39 @@ def open(
     return Model(backend, project)
 
 
-def fork(model: LabModel, label: str, **params: object) -> LabModel:
-    """Convenience wrapper for :meth:`LabModel.fork`."""
-    return model.fork(label, **params)
+def _builder_facade(**kwargs: _Any):
+    """Create an authoring builder using the simplified facade."""
+    from .authoring import ModelBuilder
+
+    return ModelBuilder(**kwargs)
 
 
-def open_project(
+def create(
+    path: str | _Path | None = None,
+    *,
+    package: str | None = None,
+    stdlib: bool = True,
+    validate_each_mutation: bool = True,
+) -> Project:
+    """Create a new source-backed project.
+
+    When *path* is omitted, the project stays fully in memory until ``save()``
+    is called with a path. When *path* is provided, ``save()`` can be called
+    without arguments.
+    """
+    project_builder = _builder_facade(validate_each_mutation=validate_each_mutation)
+    if path is not None:
+        project_builder._project_root = _Path(path)
+    project_session = _ProjectSession(project_builder, path=path)
+    if package is not None:
+        project_session.in_package(package, stdlib_imports=stdlib)
+    return project_session
+
+
+def project(
     path: str,
     *,
     validate: bool = True,
-) -> ProjectSession:
-    """Open a mutable, source-backed project session."""
-    return ProjectSession.open(path, validate=validate)
+) -> Project:
+    """Open a mutable, source-backed project."""
+    return _ProjectSession.open(path, validate=validate)

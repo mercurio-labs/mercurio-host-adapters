@@ -131,6 +131,12 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                 [{"id": "analysis.PrintSequence", "label": "PrintSequence", "subjectCount": 1}]
             )
             return
+        if parsed.path.endswith("/analysis/cases"):
+            self.requests.append({"method": "GET", "path": parsed.path})
+            self.write_json(
+                [{"id": "analysis.PrintSequence", "label": "PrintSequence", "subjectCount": 1}]
+            )
+            return
         if parsed.path.endswith("/analysis/specs"):
             self.requests.append({"method": "GET", "path": parsed.path})
             self.write_json(
@@ -229,6 +235,52 @@ class FakeMercurioHandler(BaseHTTPRequestHandler):
                     "success_count": 1,
                     "failure_count": 0,
                     "results": [{"path": "model.sysml", "ok": True}],
+                }
+            )
+            return
+        if parsed.path.endswith("/semantic/legality/check"):
+            self.write_json(
+                {
+                    "schemaVersion": "mercurio.semantic_legality.v1",
+                    "operation": payload["operation"],
+                    "status": "Allowed",
+                    "answer": {"status": "allowed"},
+                    "diagnostics": [],
+                }
+            )
+            return
+        if parsed.path.endswith("/semantic/next-actions"):
+            self.write_json(
+                {
+                    "schemaVersion": "mercurio.semantic_next_actions.v1",
+                    "legalitySchemaVersion": "mercurio.semantic_legality.v1",
+                    "element": payload.get("element"),
+                    "elementKind": payload["elementKind"],
+                    "actions": [
+                        {
+                            "element": payload.get("element"),
+                            "operation": {
+                                "kind": "addRelationship",
+                                "relationshipKind": "satisfy",
+                                "targetKind": "requirement",
+                            },
+                            "status": "Allowed",
+                            "summary": "allowed",
+                            "legality": {
+                                "schemaVersion": "mercurio.semantic_legality.v1",
+                                "operation": {
+                                    "kind": "relationship",
+                                    "relationshipKind": "satisfy",
+                                    "sourceKind": payload["elementKind"],
+                                    "targetKind": "requirement",
+                                },
+                                "status": "Allowed",
+                                "answer": {"status": "allowed"},
+                                "diagnostics": [],
+                            },
+                        }
+                    ],
+                    "truncated": False,
                 }
             )
             return
@@ -464,6 +516,56 @@ class ClientTests(unittest.TestCase):
             request["json"]["staged_files"],
             [{"path": "model.sysml", "content": "package Demo {}"}],
         )
+
+    def test_project_semantic_legality_uses_scoped_core_endpoint(self) -> None:
+        project = self.backend.open_project("C:/models/demo")
+
+        report = project.can_relate("satisfy", "part", "requirement")
+
+        self.assertEqual(report["status"], "Allowed")
+        request = FakeMercurioHandler.requests[-1]
+        self.assertEqual(
+            request["path"],
+            "/api/workspaces/ws_0000000000000001/semantic/legality/check",
+        )
+        self.assertEqual(
+            request["json"]["operation"],
+            {
+                "kind": "relationship",
+                "relationshipKind": "satisfy",
+                "sourceKind": "part",
+                "targetKind": "requirement",
+            },
+        )
+
+    def test_project_semantic_next_actions_uses_scoped_core_endpoint(self) -> None:
+        project = self.backend.open_project("C:/models/demo")
+
+        report = project.semantic_next_actions(
+            "part",
+            element="HybridVehicle.vehicle",
+            candidate_target_kinds=["requirement", "part"],
+            candidate_attributes=["text"],
+            max_actions=8,
+        )
+
+        self.assertEqual(report["schemaVersion"], "mercurio.semantic_next_actions.v1")
+        request = FakeMercurioHandler.requests[-1]
+        self.assertEqual(
+            request["path"],
+            "/api/workspaces/ws_0000000000000001/semantic/next-actions",
+        )
+        self.assertEqual(request["json"]["elementKind"], "part")
+        self.assertEqual(
+            request["json"]["element"],
+            {"qualified_name": "HybridVehicle.vehicle"},
+        )
+        self.assertEqual(
+            request["json"]["candidateTargetKinds"],
+            ["requirement", "part"],
+        )
+        self.assertEqual(request["json"]["candidateAttributes"], ["text"])
+        self.assertEqual(request["json"]["maxActions"], 8)
 
     def test_save_file_uses_project_scoped_put(self) -> None:
         project = self.backend.open_project("C:/models/demo")
@@ -808,7 +910,7 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(cases[0].label, "PrintSequence")
         self.assertEqual(
             FakeMercurioHandler.requests[-1]["path"],
-            "/api/workspaces/ws_0000000000000001/simulation/analysis-cases",
+            "/api/workspaces/ws_0000000000000001/analysis/cases",
         )
 
         report = project.run_analysis_report("analysis.PrintSequence", run_id="pytest.run")

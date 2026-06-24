@@ -60,6 +60,27 @@ class NativeRawWorkspace:
         return json.loads(element.json())
 
 
+class AnalysisHandle:
+    """Small facade for running a named analysis case."""
+
+    def __init__(self, model: "Model", name_or_id: str) -> None:
+        self._model = model
+        self.name_or_id = name_or_id
+
+    def spec(self) -> AnalysisSpec:
+        return self._model.analysis_case_spec(self.name_or_id)
+
+    def run(self, *, run_id: str | None = None) -> AnalysisRunReport:
+        try:
+            case_id = self.spec().case_ref.element_id
+        except KeyError:
+            case_id = self.name_or_id
+        return self._model.run_analysis_report(case_id, run_id=run_id)
+
+    def trace(self, *, run_id: str | None = None) -> SimulationTrace:
+        return self.run(run_id=run_id).simulation_trace()
+
+
 class Model:
     """
     Single entry point for model inspection and simulation.
@@ -137,6 +158,10 @@ class Model:
                 return spec
         raise KeyError(f"No analysis spec with name or id {name_or_id!r}")
 
+    def analysis(self, name_or_id: str) -> AnalysisHandle:
+        """Return a small handle for inspecting or running one analysis case."""
+        return AnalysisHandle(self, name_or_id)
+
     def run_analysis_report(
         self, case_id: str, *, run_id: str | None = None
     ) -> AnalysisRunReport:
@@ -182,6 +207,117 @@ class Model:
         if workspace is not None:
             return _json_object(workspace.element_details_json(element_id), "element details")
         return self._project.element(element_id)
+
+    def check_semantic_legality(
+        self,
+        operation: JsonObject,
+        *,
+        facts: list[JsonObject] | None = None,
+    ) -> JsonObject:
+        request = {"operation": operation, "facts": list(facts or ())}
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            if hasattr(workspace, "semantic_legality_json"):
+                return _json_object(
+                    workspace.semantic_legality_json(_canonical_json(request)),
+                    "semantic legality report",
+                )
+            raise RuntimeError(
+                "semantic legality requires the native Mercurio legality bridge; "
+                "upgrade the native Python package or open with an HTTP sidecar"
+            )
+        return self._project.check_semantic_legality(operation, facts=facts)
+
+    def semantic_next_actions(
+        self,
+        element_kind: str,
+        *,
+        element: str | None = None,
+        candidate_target_kinds: list[str] | None = None,
+        candidate_attributes: list[str] | None = None,
+        facts: list[JsonObject] | None = None,
+        max_actions: int | None = None,
+    ) -> JsonObject:
+        request: JsonObject = {
+            "elementKind": element_kind,
+            "candidateTargetKinds": list(candidate_target_kinds or ()),
+            "candidateAttributes": list(candidate_attributes or ()),
+            "facts": list(facts or ()),
+        }
+        if element is not None:
+            request["element"] = {"qualified_name": element}
+        if max_actions is not None:
+            request["maxActions"] = max_actions
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            if hasattr(workspace, "semantic_next_actions_json"):
+                return _json_object(
+                    workspace.semantic_next_actions_json(_canonical_json(request)),
+                    "semantic next actions report",
+                )
+            raise RuntimeError(
+                "semantic next actions require the native Mercurio next-actions bridge; "
+                "upgrade the native Python package or open with an HTTP sidecar"
+            )
+        return self._project.semantic_next_actions(
+            element_kind,
+            element=element,
+            candidate_target_kinds=candidate_target_kinds,
+            candidate_attributes=candidate_attributes,
+            facts=facts,
+            max_actions=max_actions,
+        )
+
+    def can_contain(self, container_kind: str, child_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "containment",
+                "containerKind": container_kind,
+                "childKind": child_kind,
+            }
+        )
+
+    def can_specialize(self, source_kind: str, target_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "specialization",
+                "sourceKind": source_kind,
+                "targetKind": target_kind,
+            }
+        )
+
+    def can_type_usage(self, usage_kind: str, definition_kind: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "usageTyping",
+                "usageKind": usage_kind,
+                "definitionKind": definition_kind,
+            }
+        )
+
+    def can_relate(
+        self,
+        relationship_kind: str,
+        source_kind: str,
+        target_kind: str,
+    ) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "relationship",
+                "relationshipKind": relationship_kind,
+                "sourceKind": source_kind,
+                "targetKind": target_kind,
+            }
+        )
+
+    def can_write_attribute(self, kind: str, attribute: str) -> JsonObject:
+        return self.check_semantic_legality(
+            {
+                "kind": "attributeWrite",
+                "elementKind": kind,
+                "attribute": attribute,
+            }
+        )
 
     def l2_explorer(
         self,
@@ -337,6 +473,10 @@ class Model:
     def dsl(self, source: str) -> object:
         """Run a Mercurio DSL query/action-preview expression against the model."""
         return self.run_cell(source, kind="query", language="mercurio_dsl").result
+
+    def query(self, source: str) -> object:
+        """Run a Mercurio DSL query and return the result value."""
+        return self.dsl(source)
 
     def query_dsl(self, source: str) -> object:
         return self.dsl(source)

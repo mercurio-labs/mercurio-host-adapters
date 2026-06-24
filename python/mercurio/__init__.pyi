@@ -1,40 +1,32 @@
-from typing import Any
+from pathlib import Path
 
-from .authoring import ModelBuilder
+from .lab import LabModel
 from .runtime import Model
-from .session import (
-    AnalysisQuery,
-    CellRunReport,
-    CompiledModel,
-    PartDefRef,
-    PartUsageRef,
-    ProjectSession,
-    SemanticRef,
-    SemanticQuery,
-    SimulationConfiguration,
-    SmallEdit,
-    StaleSemanticRefError,
-    TradeStudy,
-    TransactionBuilder,
-    Variant,
-    VariantBaseChangedError,
-)
+from .session import ProjectSession
 
 __version__: str
 
+Project = ProjectSession
+
 def open(
-    path: str,
+    path: str | None = None,
     *,
     executable: str | None = None,
     timeout: float = 60.0,
-) -> Model: ...
+) -> Model | LabModel: ...
 
-def open_project(
+def project(
     path: str,
     *,
     validate: bool = True,
-) -> ProjectSession: ...
+) -> Project: ...
 
-def __getattr__(name: str) -> Any: ...
+def create(
+    path: str | Path | None = None,
+    *,
+    package: str | None = None,
+    stdlib: bool = True,
+    validate_each_mutation: bool = True,
+) -> Project: ...
 
 __all__: list[str]

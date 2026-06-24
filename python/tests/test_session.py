@@ -11,6 +11,7 @@ from mercurio.session import (
     CompiledModel,
     SimulationConfiguration,
     ProjectSession,
+    SemanticRef,
     SemanticQuery,
     StaleSemanticRefError,
     TransactionBuilder,
@@ -315,32 +316,39 @@ class SessionLayerTests(unittest.TestCase):
             },
         ]
 
-    def test_package_root_exports_layered_api_without_native_builder(self) -> None:
+    def test_package_root_exports_small_facade_without_native_builder(self) -> None:
         expected = {
-            "AnalysisQuery",
-            "CompiledModel",
-            "PartDefRef",
-            "PartUsageRef",
-            "ProjectSession",
-            "SemanticRef",
-            "SemanticQuery",
-            "SimulationConfiguration",
-            "SmallEdit",
-            "StaleSemanticRefError",
-            "TradeStudy",
-            "TransactionBuilder",
-            "Variant",
-            "VariantBaseChangedError",
+            "Model",
+            "Project",
+            "create",
             "open",
-            "open_project",
+            "project",
         }
 
-        self.assertTrue(expected.issubset(set(mercurio.__all__)))
-        self.assertIs(mercurio.CompiledModel, CompiledModel)
-        self.assertIs(mercurio.AnalysisQuery, AnalysisQuery)
-        self.assertIs(mercurio.SemanticQuery, SemanticQuery)
-        self.assertIs(mercurio.TransactionBuilder, TransactionBuilder)
-        self.assertIs(mercurio.SimulationConfiguration, SimulationConfiguration)
+        self.assertEqual(set(mercurio.__all__), expected)
+        self.assertNotIn("MercurioClient", mercurio.__all__)
+        self.assertIs(mercurio.Project, ProjectSession)
+
+    def test_package_root_does_not_expose_legacy_aliases(self) -> None:
+        self.assertNotIn("CompiledModel", mercurio.__all__)
+        for name in (
+            "AnalysisQuery",
+            "Attribute",
+            "CompiledModel",
+            "ModelBuilder",
+            "Part",
+            "ProjectSession",
+            "Ref",
+            "SemanticQuery",
+            "SemanticRef",
+            "SimulationConfiguration",
+            "Snapshot",
+            "TransactionBuilder",
+            "builder",
+            "open_project",
+        ):
+            with self.assertRaises(AttributeError):
+                getattr(mercurio, name)
 
     def test_compiled_model_exposes_immutable_refs_with_revision(self) -> None:
         model = CompiledModel(FakeSemanticModel(self.vehicle_rows()))

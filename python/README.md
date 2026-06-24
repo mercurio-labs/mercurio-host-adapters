@@ -2,13 +2,27 @@
 
 This package is a typed Python client for Mercurio models.
 
+For a full API reference, see [`API.md`](API.md).
+
+Most scripts should use the small facade:
+
+- `mercurio.open(path)` for read/query/analysis workflows.
+- `mercurio.project(path)` for source-backed authoring and edits.
+- `mercurio.create(path=None, package=...)` for new projects, including fully
+  in-memory projects when `path` is omitted.
+- `from mercurio import model` for declaration factories such as
+  `model.part_def(...)`, `model.part(...)`, and `model.attr(...)`.
+- `mercurio.capability` for process-provider capability authoring.
+
 ```python
 import mercurio
+from mercurio import model
 
-with mercurio.open("C:/models/demo") as model:
-    bed = model.part("bed")
-    trace = model.run_analysis("PrintSequence")
-    graph = model.raw.graph()
+with mercurio.open("C:/models/demo") as runtime_model:
+    rows = runtime_model.query("model.parts().count()")
+
+project = mercurio.create(package="Demo")
+project.add(model.part_def("Vehicle").with_part(model.part("engine").typed("Engine")))
 ```
 
 ## Analysis Specs And Simulation
@@ -74,6 +88,36 @@ lookup-table channels, evidence, diagnostics, and optional harness checks:
 python examples/analysis_execution_showcase.py C:/models/demo --case PrintSequence --subject bed --require-passed
 ```
 
+## Semantic Legality
+
+The Python facade exposes the same core semantic legality service used by AI,
+REST, UI transports, and CLI probes:
+
+```python
+with mercurio.open("C:/models/demo") as model:
+    report = model.can_relate("satisfy", "part", "requirement")
+    assert report["status"] in {"Allowed", "AllowedWithWarnings"}
+```
+
+In Lab notebooks, `mercurio.open()` returns a `LabModel`; its `can_contain`,
+`can_specialize`, `can_type_usage`, `can_relate`, and `can_write_attribute`
+methods delegate to the workspace model instead of implementing separate
+Python-side rules.
+
+Use `semantic_next_actions()` to ask the same core service for allowed,
+blocked, and unknown candidate actions for an element kind. Returned actions
+include a core-assigned `rank`, with lower ranks preferred:
+
+```python
+with mercurio.open("C:/models/demo") as model:
+    actions = model.semantic_next_actions(
+        "part",
+        element="HybridVehicle.vehicle",
+        candidate_target_kinds=["requirement", "part"],
+        candidate_attributes=["id", "text"],
+    )
+```
+
 ## Source-backed Project Sessions
 
 For authoring, small edits, semantic queries, variants, and future simulation
@@ -82,18 +126,18 @@ snapshots from it:
 
 ```python
 import mercurio
-from mercurio.authoring import PartUsage
+from mercurio import model
 
-project = mercurio.open_project("C:/models/vehicle/.project.json")
+project = mercurio.project("C:/models/vehicle/.project.json")
 
-decl = PartUsage("engine").typed("Engine")
+decl = model.part("engine").typed("Engine")
 project.add(decl)
 
-model = project.compile()
-engine = model.resolve(decl)
+snapshot = project.compile()
+engine = snapshot.resolve(decl)
 ```
 
-`project` is mutable and source-backed. `model` is an immutable compiled
+`project` is mutable and source-backed. `snapshot` is an immutable compiled
 snapshot with a stable revision hash. `engine` is an immutable semantic ref into
 that one snapshot.
 
@@ -103,8 +147,8 @@ from a semantic ref:
 ```python
 project.edit(engine).rename("motor")
 
-model2 = project.compile()
-motor = model2.part_usage("motor")
+snapshot2 = project.compile()
+motor = snapshot2.part_usage("motor")
 ```
 
 The old `engine` ref remains tied to the old model revision. Recompile and
@@ -117,14 +161,14 @@ instead of live mutable handles.
 Semantic refs support analysis-style traversal and queries:
 
 ```python
-vehicle = model.part_def("Vehicle")
+vehicle = snapshot.part_def("Vehicle")
 subtypes = vehicle.subtypes(transitive=True)
 children = list(vehicle.walk())
 
-subtypes = model.query.subtypes("Vehicle")
-part_rows = model.to_records(model.query.part_defs())
-containment = model.graph("containment")
-specialization = model.graph("specialization")
+subtypes = snapshot.query.subtypes("Vehicle")
+part_rows = snapshot.to_records(snapshot.query.part_defs())
+containment = snapshot.graph("containment")
+specialization = snapshot.graph("specialization")
 ```
 
 Compiled models also support snapshot comparison:
@@ -236,10 +280,10 @@ and writes a `ReasoningCapabilityRunResponse` JSON object to stdout.
 Minimal capability:
 
 ```python
-from mercurio_capability import CapabilityRequest, CapabilityRunner, Finding, ReasoningReport
+from mercurio.capability import CapabilityRequest, Finding, ReasoningReport, capability, run
 
 
-@CapabilityRunner.capability(
+@capability(
     id="org.example.hello",
     kind="mercurio.capability.kind/static-analysis",
     name="Hello Capability",
@@ -259,7 +303,7 @@ def analyze(request: CapabilityRequest) -> ReasoningReport:
 
 
 if __name__ == "__main__":
-    CapabilityRunner.run(analyze)
+    run(analyze)
 ```
 
 Project plugin manifest excerpt:
