@@ -161,7 +161,7 @@ These dataclasses wrap common backend payloads.
 | Type | Fields and APIs |
 | --- | --- |
 | `AnalysisCaseInfo` | `id`, `label`, `subject_count`; `from_json(data)`. |
-| `AnalysisElementRef` | `element_id`, `kind`, `label`; `from_json(data)`. |
+| `AnalysisElementRef` | Alias of `SemanticElementRef`; analysis payloads set `kind`. |
 | `AnalysisExpectedArtifact` | `kind`, `schema`; `from_json(data)`. |
 | `AnalysisReadinessDiagnostic` | `severity`, `code`, `message`, `element_id`; `from_json(data)`. |
 | `AnalysisClockConfig` | `max_steps`, `step_duration_s`, `max_time_s`, `fixed_step_s`, `sample_interval_s`, `change_loop_limit`; `from_json(data)`. |
@@ -175,7 +175,7 @@ These dataclasses wrap common backend payloads.
 
 | Type | Fields and APIs |
 | --- | --- |
-| `SemanticElementRef` | `element_id`, `qualified_name`, `label`; `from_json(data)`. |
+| `SemanticElementRef` | `element_id`, `qualified_name`, `label`, `kind`; `from_json(data)`. |
 | `SemanticArtifact` | `id`, `kind`, `schema`, `digest`, `element_refs`, `payload`; `from_json(data)`. |
 | `EvidenceNode` | `id`, `kind`, `label`, `element_refs`, `properties`; `from_json(data)`. |
 | `EvidenceEdge` | `source_id`, `target_id`, `relation`; `from_json(data)`. |
