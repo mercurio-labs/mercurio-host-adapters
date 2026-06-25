@@ -176,18 +176,23 @@ class AnalysisCaseInfo:
 
 
 @dataclass(frozen=True)
-class AnalysisElementRef:
+class SemanticElementRef:
     element_id: str
-    kind: str
+    qualified_name: str | None
     label: str | None
+    kind: str | None
 
     @classmethod
-    def from_json(cls, data: JsonObject) -> "AnalysisElementRef":
+    def from_json(cls, data: JsonObject) -> "SemanticElementRef":
         return cls(
             element_id=str(_field(data, "element_id", "elementId", "")),
-            kind=str(data.get("kind", "")),
+            qualified_name=_field(data, "qualified_name", "qualifiedName"),
             label=data.get("label"),
+            kind=data.get("kind"),
         )
+
+
+AnalysisElementRef = SemanticElementRef
 
 
 @dataclass(frozen=True)
@@ -456,21 +461,6 @@ class AnalysisSpec:
                 )
                 if isinstance(item, dict)
             ],
-        )
-
-
-@dataclass(frozen=True)
-class SemanticElementRef:
-    element_id: str
-    qualified_name: str | None
-    label: str | None
-
-    @classmethod
-    def from_json(cls, data: JsonObject) -> "SemanticElementRef":
-        return cls(
-            element_id=str(_field(data, "element_id", "elementId", "")),
-            qualified_name=_field(data, "qualified_name", "qualifiedName"),
-            label=data.get("label"),
         )
 
 
