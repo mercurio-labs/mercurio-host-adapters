@@ -382,7 +382,8 @@ native semantic model.
 | `in_package(name, *, stdlib_imports=True) -> ModelBuilder` | Add/select the default package and optionally import common stdlib namespaces. |
 | `add(element) -> ModelBuilder` | Add a typed declaration into the default package. |
 | `add_to(container, element) -> ModelBuilder` | Add a typed declaration into an existing container. |
-| `create(metaclass, name, *, container=None, type=None, ty=None, specializes=None, additional_types=None, subsets=None, redefines=None, reference_target=None, transition_source=None, transition_target=None, trigger=None, doc=None, body=None, expression=None, multiplicity=None, direction=None, short_name=None, annotated_elements=None, language_extensions=None, language_extension_keyword=None, abstract=None, end=None, individual=None, attributes=None) -> str` | Generic escape hatch for authorable `*Definition` and `*Usage` metaclasses. Returns the created qualified name. |
+| `add_element(metaclass, name, *, container=None, type=None, ty=None, specializes=None, properties=None, profile=None) -> str` | Create a semantic element by metaclass through the native rule-backed mutation surface. |
+| `create(metaclass, name, *, container=None, type=None, ty=None, specializes=None, additional_types=None, subsets=None, redefines=None, reference_target=None, transition_source=None, transition_target=None, trigger=None, doc=None, body=None, expression=None, multiplicity=None, direction=None, short_name=None, annotated_elements=None, language_extensions=None, language_extension_keyword=None, abstract=None, end=None, individual=None, attributes=None) -> str` | Generic semantic metaclass escape hatch. Delegates creation through `add_element()` and then applies additional semantic attributes. Returns the created qualified name. |
 | `rename(qualified_name, new_name) -> ModelBuilder` | Rename a declaration. |
 | `remove(qualified_name) -> ModelBuilder` | Remove a declaration. |
 | `add_import(path, *, package=None, target_file=None) -> ModelBuilder` | Add an import. |
@@ -587,7 +588,7 @@ Project-scoped HTTP convenience layer.
 | `compile_project(project_path=".", *, staged_files=None) -> SemanticProjectResult` | Compile project preview. |
 | `compile_project_preview(...) -> SemanticProjectResult` | Same implementation as `compile_project()`. |
 | `lint_project_preview(project_path=".", *, staged_files=None) -> JsonObject` | Project lint preview. |
-| `list_analysis_specs() -> list[AnalysisSpec]`, `list_analysis_cases() -> list[AnalysisCaseInfo]` | Analysis listing. |
+| `list_analysis_specs() -> list[AnalysisSpec]`, `list_analysis_cases() -> list[AnalysisCaseInfo]`, `analysis_opportunities() -> AnalysisOpportunityReport` | Analysis listing and semantic opportunity discovery. |
 | `run_analysis_report(case_id, *, run_id=None) -> AnalysisRunReport`, `run_analysis(case_id) -> SimulationTrace` | Analysis execution. |
 | `parts() -> list[PartRef]` | Part tree. |
 | `close() -> None` | Delete the backend workspace. |
@@ -617,7 +618,7 @@ define the lower-level native surface.
 | `ModelBuilder(...)` | Native builder used by `mercurio.authoring.ModelBuilder`. |
 | `ModelBuilder.from_project(path, validate_each_mutation=True)` | Load project source. |
 | `ModelBuilder.from_sysml_files(files, validate_each_mutation=True)` | Load source mapping. |
-| `add_package()`, `add_import()`, `remove_import()`, `add_definition()`, `add_usage()`, `remove_declaration()`, `update_specializations()`, `add_relationship()`, `add_metadata_annotation()`, `set_expression()`, `set_usage_type()`, `set_attribute()`, `add_attribute_value()`, `remove_attribute_value()`, `clear_attribute()`, `move_declaration()` | Native authoring mutations returning `WriteBackResult`. |
+| `add_package()`, `add_element()`, `add_import()`, `remove_import()`, `add_definition()`, `add_usage()`, `remove_declaration()`, `update_specializations()`, `add_relationship()`, `add_metadata_annotation()`, `set_expression()`, `set_usage_type()`, `set_attribute()`, `add_attribute_value()`, `remove_attribute_value()`, `clear_attribute()`, `move_declaration()` | Native authoring mutations returning `WriteBackResult`; `add_definition()` and `add_usage()` remain compatibility helpers. |
 | `render_file(path)`, `files()`, `rendered_files()`, `compile_json()`, `compile_model()`, `validate()` | Native rendering, compile, and validation helpers. |
 
 ### Native Semantic Model And Workspace

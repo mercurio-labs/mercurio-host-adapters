@@ -324,6 +324,34 @@ class ModelBuilder:
         element._emit(self._inner, container)
         return self
 
+    def add_element(
+        self,
+        metaclass: str,
+        name: str,
+        *,
+        container: str | None = None,
+        type: Any = None,
+        ty: Any = None,
+        specializes: Any = None,
+        properties: dict[str, str] | None = None,
+        profile: str | None = None,
+    ) -> str:
+        """Create a semantic element by metaclass through the native rules surface."""
+        target_container = container or self._default_package
+        if target_container is None:
+            raise ValueError("add_element() requires container= or a prior in_package() call")
+        usage_type = type if type is not None else ty
+        self._inner.add_element(
+            target_container,
+            metaclass,
+            name,
+            None if usage_type is None else _ref(usage_type),
+            _qnames(specializes),
+            properties,
+            profile,
+        )
+        return f"{target_container}.{name}"
+
     def create(
         self,
         metaclass: str,
@@ -364,28 +392,14 @@ class ModelBuilder:
             raise ValueError("create() requires container= or a prior in_package() call")
 
         qname = f"{target_container}.{name}"
-        if metaclass.endswith(_AUTHORABLE_DEFINITION_SUFFIX):
-            keyword = _keyword_from_metaclass(metaclass, _AUTHORABLE_DEFINITION_SUFFIX)
-            self._inner.add_definition(
-                target_container,
-                keyword,
-                name,
-                _qnames(specializes),
-            )
-        elif metaclass.endswith(_AUTHORABLE_USAGE_SUFFIX):
-            keyword = _keyword_from_metaclass(metaclass, _AUTHORABLE_USAGE_SUFFIX)
-            usage_type = type if type is not None else ty
-            self._inner.add_usage(
-                target_container,
-                keyword,
-                name,
-                None if usage_type is None else _ref(usage_type),
-                _qnames(specializes),
-            )
-        else:
-            raise ValueError(
-                f"unsupported authoring metaclass: {metaclass!r}; expected a *Definition or *Usage metaclass"
-            )
+        self.add_element(
+            metaclass,
+            name,
+            container=target_container,
+            type=type,
+            ty=ty,
+            specializes=specializes,
+        )
 
         if expression is not None:
             self._inner.set_expression(qname, expression)

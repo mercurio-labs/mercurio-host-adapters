@@ -69,6 +69,16 @@ class ModelBuilder:
         ty: str | None = None,
         specializes: list[str] | None = None,
     ) -> WriteBackResult: ...
+    def add_element(
+        self,
+        container: str,
+        metaclass: str,
+        name: str,
+        ty: str | None = None,
+        specializes: list[str] | None = None,
+        properties: dict[str, str] | None = None,
+        profile: str | None = None,
+    ) -> WriteBackResult: ...
     def set_expression(self, element: str, expression: str | None = None) -> WriteBackResult: ...
     def set_usage_type(self, element: str, ty: str | None = None) -> WriteBackResult: ...
     def set_attribute(self, element: str, attribute: str, value: Any) -> WriteBackResult: ...

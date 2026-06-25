@@ -7,10 +7,11 @@ use mercurio_core::{
     AttributeWritePolicy, AuthoringProject, CapabilityRunStatus, CellKind, CellLanguage,
     CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
     CommitResult, CommitStrategy, ContainerSelector, DslAnalysisRunRequest, DslAnalysisRunSpec,
-    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, ForkElement, Graph,
-    GraphScope, KirDocument, L2ExplorerRequestDto, MetamodelAttributeRegistry,
-    MetatypeExplorerRequestDto, ModelFork, ModelSession, ModelWorkspace, Mutation,
-    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticLegalityRequest,
+    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, FeasibilityStatus,
+    ForkElement, Graph, GraphScope, KirDocument, L2ExplorerRequestDto, MetamodelAttributeRegistry,
+    MetatypeExplorerRequestDto, ModelFork, ModelSession, ModelWorkspace, Mutation, MutationContext,
+    MutationFeasibilityService, MutationProposal, ProjectDescriptor, QualifiedName,
+    SemanticChangeSet, SemanticEdit, SemanticElementKind, SemanticLegalityRequest,
     SemanticMutation, SemanticNextActionsRequest, SemanticTransaction, SessionError,
     TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
     collect_specialization_ancestors, default_language_profile, element_metatype,
@@ -21,8 +22,8 @@ use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
     StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
     list_analysis_specs, load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
-    resolve_default_stdlib_locator, sysml_semantic_legality_service,
-    sysml_semantic_next_actions_service,
+    resolve_default_stdlib_locator, sysml_mutation_feasibility_service,
+    sysml_semantic_legality_service, sysml_semantic_next_actions_service,
 };
 use mercurio_view_model::{
     ElementDetailsDto, PartDto, element_details_from_graph, parts_from_graph,
@@ -867,6 +868,36 @@ impl PyModelBuilder {
         })
     }
 
+    #[pyo3(signature = (container, metaclass, name, ty=None, specializes=None, properties=None, profile=None))]
+    fn add_element(
+        &mut self,
+        container: String,
+        metaclass: String,
+        name: String,
+        ty: Option<String>,
+        specializes: Option<Vec<String>>,
+        properties: Option<BTreeMap<String, String>>,
+        profile: Option<String>,
+    ) -> PyResult<PyWriteBackResult> {
+        let properties = properties
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| (key, serde_json::Value::String(value)))
+            .collect();
+        self.apply_semantic_mutation_and_write_back(SemanticMutation::AddElement {
+            container: ElementRef::new(container),
+            kind: SemanticElementKind { metaclass, profile },
+            name,
+            ty: ty.map(ElementRef::new),
+            specializes: specializes
+                .unwrap_or_default()
+                .into_iter()
+                .map(ElementRef::new)
+                .collect(),
+            properties,
+        })
+    }
+
     fn rename(&mut self, element: String, new_name: String) -> PyResult<PyWriteBackResult> {
         self.apply_and_write_back(Mutation::RenameDeclaration {
             qualified_name: qname(&element),
@@ -1123,6 +1154,73 @@ impl PyModelBuilder {
             write_back,
             changed_files,
             changed_declarations,
+        ))
+    }
+
+    fn apply_semantic_mutation_and_write_back(
+        &mut self,
+        operation: SemanticMutation,
+    ) -> PyResult<PyWriteBackResult> {
+        let service = sysml_mutation_feasibility_service();
+        let context = MutationContext::from_project(self.project.clone());
+        let proposal = MutationProposal {
+            intent: "Python semantic add_element".to_string(),
+            operations: vec![operation],
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: context.workspace_revision.clone(),
+        };
+        let report = service.check(&context, &proposal);
+        if !matches!(
+            report.status,
+            FeasibilityStatus::Allowed | FeasibilityStatus::AllowedWithWarnings
+        ) {
+            let reasons = report
+                .blocking_reasons
+                .iter()
+                .chain(report.warnings.iter())
+                .map(|issue| issue.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(PyValueError::new_err(if reasons.is_empty() {
+                format!("semantic mutation blocked with status {:?}", report.status)
+            } else {
+                format!(
+                    "semantic mutation blocked with status {:?}: {}",
+                    report.status, reasons
+                )
+            }));
+        }
+        let plan = report
+            .normalized_plan
+            .ok_or_else(|| PyValueError::new_err("semantic mutation check produced no plan"))?;
+        let mut changed_files = BTreeSet::new();
+        let mut changed_declarations = BTreeSet::new();
+        for operation in plan.normalized_operations {
+            apply_checked_semantic_operation_to_project(
+                &service,
+                &mut self.project,
+                operation,
+                &mut changed_files,
+                &mut changed_declarations,
+            )?;
+        }
+        let changed_files_vec = changed_files.iter().cloned().collect::<Vec<_>>();
+        let changed_declarations_vec = changed_declarations.iter().cloned().collect::<Vec<_>>();
+        if !self.validate_each_mutation {
+            self.pending_changed_files.extend(changed_files);
+            self.pending_changed_declarations
+                .extend(changed_declarations);
+            return self.deferred_write_back_result(changed_files_vec, changed_declarations_vec);
+        }
+        let write_back = self
+            .project
+            .write_back_changed_files_and_update(&changed_files)
+            .map_err(authoring_error)?;
+        Ok(py_write_back_result(
+            write_back,
+            changed_files_vec,
+            changed_declarations_vec,
         ))
     }
 
@@ -2062,6 +2160,72 @@ fn py_write_back_result(
         validation_ok: write_back.validation.ok,
         validation_message: write_back.validation.message,
     }
+}
+
+fn apply_checked_semantic_operation_to_project(
+    service: &mercurio_sysml::SysmlMutationFeasibilityService,
+    project: &mut AuthoringProject,
+    operation: SemanticMutation,
+    changed_files: &mut BTreeSet<String>,
+    changed_declarations: &mut BTreeSet<String>,
+) -> PyResult<()> {
+    let result = match &operation {
+        SemanticMutation::SetAttribute {
+            element,
+            attribute,
+            value,
+        } => project.apply_semantic_edit(SemanticEdit::SetAttribute {
+            element: element.as_qualified_name(),
+            attribute: attribute.clone(),
+            value: value.clone(),
+            policy: AttributeWritePolicy::UpsertDirect,
+        }),
+        _ => {
+            let mutation = service
+                .authoring_mutation_for_operation(project, &operation)
+                .ok_or_else(|| {
+                    PyValueError::new_err("semantic operation has no authoring write-back path")
+                })?;
+            project.apply_mutation(mutation)
+        }
+    }
+    .map_err(authoring_error)?;
+    changed_files.extend(result.changed_files);
+    changed_declarations.extend(result.changed_declarations);
+
+    if let SemanticMutation::AddElement {
+        container,
+        name,
+        properties,
+        ..
+    } = operation
+    {
+        let element = qname(&format!("{}.{}", container.qualified_name, name));
+        for (attribute, value) in properties
+            .into_iter()
+            .filter(|(attribute, _)| !is_structural_add_element_property(attribute))
+        {
+            let result = project
+                .apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: element.clone(),
+                    attribute,
+                    value,
+                    policy: AttributeWritePolicy::UpsertDirect,
+                })
+                .map_err(authoring_error)?;
+            changed_files.extend(result.changed_files);
+            changed_declarations.extend(result.changed_declarations);
+        }
+    }
+
+    Ok(())
+}
+
+fn is_structural_add_element_property(attribute: &str) -> bool {
+    matches!(
+        attribute,
+        "declared_name" | "qualified_name" | "owner" | "type" | "specializes"
+    )
 }
 
 fn qname(value: &str) -> QualifiedName {
@@ -3664,6 +3828,30 @@ mod tests {
             assert!(rendered.contains("doc /* Vehicle usage */"));
             assert!(rendered.contains("end part vehicle: Vehicle"));
         });
+    }
+
+    #[test]
+    fn builder_add_element_uses_semantic_rules_for_sysml_authoring() {
+        pyo3::prepare_freethreaded_python();
+        let mut builder = PyModelBuilder::new(true).unwrap();
+        builder
+            .add_package("model.sysml".to_string(), "Demo".to_string())
+            .unwrap();
+        builder
+            .add_element(
+                "Demo".to_string(),
+                "StateUsage".to_string(),
+                "idle".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let rendered = builder.render_file("model.sysml".to_string()).unwrap();
+        assert!(rendered.contains("state idle;"));
+        assert!(!rendered.contains("substate"));
     }
 
     #[test]

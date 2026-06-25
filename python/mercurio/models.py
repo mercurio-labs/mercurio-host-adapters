@@ -191,6 +191,67 @@ class AnalysisElementRef:
 
 
 @dataclass(frozen=True)
+class AnalysisOpportunity:
+    id: str
+    kind: str
+    label: str
+    description: str
+    runnable: bool
+    elements: list[AnalysisElementRef]
+    techniques: list[str]
+    capability_id: str | None
+    action_id: str | None
+    route_hint: str | None
+    metadata: JsonObject
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisOpportunity":
+        return cls(
+            id=str(data.get("id", "")),
+            kind=str(data.get("kind", "")),
+            label=str(data.get("label", "")),
+            description=str(data.get("description", "")),
+            runnable=bool(data.get("runnable", False)),
+            elements=[
+                AnalysisElementRef.from_json(item)
+                for item in _list_field(data, "elements", "elements")
+                if isinstance(item, dict)
+            ],
+            techniques=[
+                str(item) for item in _list_field(data, "techniques", "techniques")
+            ],
+            capability_id=_field(data, "capability_id", "capabilityId"),
+            action_id=_field(data, "action_id", "actionId"),
+            route_hint=_field(data, "route_hint", "routeHint"),
+            metadata=_object_field(data, "metadata", "metadata"),
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisOpportunityReport:
+    schema: str
+    opportunities: list[AnalysisOpportunity]
+
+    @classmethod
+    def from_json(cls, data: JsonObject) -> "AnalysisOpportunityReport":
+        return cls(
+            schema=str(data.get("schema", "")),
+            opportunities=[
+                AnalysisOpportunity.from_json(item)
+                for item in _list_field(data, "opportunities", "opportunities")
+                if isinstance(item, dict)
+            ],
+        )
+
+    def runnable(self) -> list[AnalysisOpportunity]:
+        return [
+            opportunity
+            for opportunity in self.opportunities
+            if opportunity.runnable
+        ]
+
+
+@dataclass(frozen=True)
 class AnalysisExpectedArtifact:
     kind: str
     schema: str

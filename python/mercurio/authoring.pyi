@@ -22,6 +22,18 @@ class ModelBuilder:
     def in_package(self, name: str, *, stdlib_imports: bool = True) -> ModelBuilder: ...
     def add(self, element: _Declaration) -> ModelBuilder: ...
     def add_to(self, container: str, element: _Declaration) -> ModelBuilder: ...
+    def add_element(
+        self,
+        metaclass: str,
+        name: str,
+        *,
+        container: str | None = None,
+        type: Any = None,
+        ty: Any = None,
+        specializes: Any = None,
+        properties: dict[str, str] | None = None,
+        profile: str | None = None,
+    ) -> str: ...
     def create(
         self,
         metaclass: str,

@@ -52,6 +52,23 @@ class FakeNativeModelBuilder:
     ) -> None:
         self.calls.append(("add_usage", (container, keyword, name, ty, specializes)))
 
+    def add_element(
+        self,
+        container: str,
+        metaclass: str,
+        name: str,
+        ty: str | None = None,
+        specializes: list[str] | None = None,
+        properties: dict[str, str] | None = None,
+        profile: str | None = None,
+    ) -> None:
+        self.calls.append(
+            (
+                "add_element",
+                (container, metaclass, name, ty, specializes, properties, profile),
+            )
+        )
+
     def set_expression(self, element: str, expression: str | None = None) -> None:
         self.calls.append(("set_expression", (element, expression)))
 

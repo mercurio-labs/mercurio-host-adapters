@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .client import MercurioClient
 from .models import (
+    AnalysisOpportunityReport,
     AnalysisRunReport,
     JsonObject,
     PartRef,
@@ -301,6 +302,10 @@ class MercurioProject:
 
         data = self.client.get(self._path("/analysis/cases"))
         return [AnalysisCaseInfo.from_json(item) for item in data]
+
+    def analysis_opportunities(self) -> AnalysisOpportunityReport:
+        data = self.client.get(self._path("/analysis/opportunities"))
+        return AnalysisOpportunityReport.from_json(data)
 
     def run_analysis_report(
         self, case_id: str, *, run_id: str | None = None

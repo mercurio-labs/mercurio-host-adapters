@@ -5,6 +5,7 @@ import json
 from .backend import Mercurio
 from .models import (
     AnalysisCaseInfo,
+    AnalysisOpportunityReport,
     AnalysisRunReport,
     AnalysisSpec,
     JsonObject,
@@ -132,6 +133,14 @@ class Model:
         if workspace is not None:
             return workspace.list_analysis_cases()
         return self._project.list_analysis_cases()
+
+    def analysis_opportunities(self) -> AnalysisOpportunityReport:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None and hasattr(workspace, "analysis_opportunities_json"):
+            return AnalysisOpportunityReport.from_json(
+                json.loads(workspace.analysis_opportunities_json())
+            )
+        return self._project.analysis_opportunities()
 
     def analysis_specs(self) -> list[AnalysisSpec]:
         workspace = getattr(self, "_workspace", None)
