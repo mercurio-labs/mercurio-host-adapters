@@ -145,7 +145,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.Vehicle")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_definition", ("Demo", "part", "Vehicle", ["BaseVehicle"])),
+            ("add_element", ("Demo", "PartDefinition", "Vehicle", None, ["BaseVehicle"], None, None)),
             native.calls,
         )
         self.assertIn(
@@ -221,8 +221,8 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(
             native.calls[0],
             (
-                "add_usage",
-                ("Demo.Vehicle", "attribute", "mass", "ISQ::MassValue", None),
+                "add_element",
+                ("Demo.Vehicle", "AttributeUsage", "mass", "ISQ::MassValue", None, None, None),
             ),
         )
         self.assertIn(
@@ -283,7 +283,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.Signal")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_definition", ("Demo", "item", "Signal", None)),
+            ("add_element", ("Demo", "ItemDefinition", "Signal", None, None, None, None)),
             native.calls,
         )
 
@@ -295,7 +295,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.providePower")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_usage", ("Demo", "perform", "providePower", None, None)),
+            ("add_element", ("Demo", "PerformActionUsage", "providePower", None, None, None, None)),
             native.calls,
         )
 
@@ -313,7 +313,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.vehicleSafety")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_usage", ("Demo", "metadata", "vehicleSafety", "Safety", None)),
+            ("add_element", ("Demo", "MetadataUsage", "vehicleSafety", "Safety", None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -334,7 +334,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.SecurityFeature")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_definition", ("Demo", "metadata", "SecurityFeature", None)),
+            ("add_element", ("Demo", "MetadataDefinition", "SecurityFeature", None, None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -369,7 +369,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(port, "Demo.ServiceDiscovery")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_definition", ("Demo", "scenario", "DeviceFailure", None)),
+            ("add_element", ("Demo", "ScenarioDefinition", "DeviceFailure", None, None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -380,7 +380,7 @@ class AuthoringCreateTests(unittest.TestCase):
             native.calls,
         )
         self.assertIn(
-            ("add_definition", ("Demo", "port", "ServiceDiscovery", None)),
+            ("add_element", ("Demo", "PortDefinition", "ServiceDiscovery", None, None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -406,13 +406,13 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(usage, "Demo.transportPassenger")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_definition", ("Demo", "use-case", "TransportPassenger", None)),
+            ("add_element", ("Demo", "UseCaseDefinition", "TransportPassenger", None, None, None, None)),
             native.calls,
         )
         self.assertIn(
             (
-                "add_usage",
-                ("Demo", "use-case", "transportPassenger", "TransportPassenger", None),
+                "add_element",
+                ("Demo", "UseCaseUsage", "transportPassenger", "TransportPassenger", None, None, None),
             ),
             native.calls,
         )
@@ -432,7 +432,10 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.VehicleStates.off_to_starting")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_usage", ("Demo.VehicleStates", "transition", "off_to_starting", None, None)),
+            (
+                "add_element",
+                ("Demo.VehicleStates", "TransitionUsage", "off_to_starting", None, None, None, None),
+            ),
             native.calls,
         )
         self.assertIn(
@@ -462,7 +465,7 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(qname, "Demo.massConstraint")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_usage", ("Demo", "constraint", "massConstraint", "MassConstraint", None)),
+            ("add_element", ("Demo", "ConstraintUsage", "massConstraint", "MassConstraint", None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -486,11 +489,11 @@ class AuthoringCreateTests(unittest.TestCase):
         self.assertEqual(individual_qname, "Demo.vehicle1")
         native = FakeNativeModelBuilder.instances[-1]
         self.assertIn(
-            ("add_usage", ("Demo", "occurrence", "event1", None, None)),
+            ("add_element", ("Demo", "OccurrenceUsage", "event1", None, None, None, None)),
             native.calls,
         )
         self.assertIn(
-            ("add_usage", ("Demo", "part", "vehicle1", "Vehicle", None)),
+            ("add_element", ("Demo", "PartUsage", "vehicle1", "Vehicle", None, None, None)),
             native.calls,
         )
         self.assertIn(
@@ -498,11 +501,17 @@ class AuthoringCreateTests(unittest.TestCase):
             native.calls,
         )
 
-    def test_create_rejects_unsupported_metaclass(self) -> None:
+    def test_create_accepts_generic_metaclass_escape_hatch(self) -> None:
         builder = self.authoring.ModelBuilder()
 
-        with self.assertRaisesRegex(ValueError, "unsupported authoring metaclass"):
-            builder.create("Comment", "note", container="Demo")
+        qname = builder.create("Comment", "note", container="Demo")
+
+        self.assertEqual(qname, "Demo.note")
+        native = FakeNativeModelBuilder.instances[-1]
+        self.assertIn(
+            ("add_element", ("Demo", "Comment", "note", None, None, None, None)),
+            native.calls,
+        )
 
     def test_facade_exposes_native_mutation_helpers(self) -> None:
         builder = self.authoring.ModelBuilder()

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "mercurio"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Native Python bindings for Mercurio."
 requires-python = ">=3.10"
 license = "MIT"
