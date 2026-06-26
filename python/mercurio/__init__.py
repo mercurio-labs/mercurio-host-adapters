@@ -18,7 +18,7 @@ __all__ = [
     "project",
 ]
 
-__version__ = "0.1.0b3"
+__version__ = "0.1.0b4"
 
 def open(
     path: str | None = None,

@@ -54,7 +54,7 @@ jobs:
           path: mercurio-host-adapters/crates/mercurio-python/dist/*.whl
 
   github-release:
-    needs: wheels
+    needs: [wheels, smoke-python-examples]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -70,6 +70,38 @@ jobs:
           files: dist/*.whl
           prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
+
+  smoke-python-examples:
+    needs: wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-examples
+          path: mercurio-examples
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheels-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Install released wheel candidate
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -c "import mercurio; print(mercurio.__version__)"
+      - name: Run pure Python examples
+        working-directory: mercurio-examples/python
+        run: |
+          . ../../.venv/bin/activate
+          for example in 0*.py; do
+            echo "::group::$example"
+            python "$example"
+            echo "::endgroup::"
+          done
 
   publish-testpypi:
     needs: wheels

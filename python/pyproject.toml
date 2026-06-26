@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mercurio"
-version = "0.1.0b3"
+version = "0.1.0b4"
 description = "Python client and capability authoring SDK for Mercurio."
 readme = "README.md"
 requires-python = ">=3.10"
