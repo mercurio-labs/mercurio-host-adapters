@@ -8,12 +8,12 @@ use mercurio_core::{
     CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
     CommitResult, CommitStrategy, ContainerSelector, DslAnalysisRunRequest, DslAnalysisRunSpec,
     DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, FeasibilityStatus,
-    ForkElement, Graph, GraphScope, KirDocument, L2ExplorerRequestDto, MetamodelAttributeRegistry,
-    MetatypeExplorerRequestDto, ModelFork, ModelSession, ModelWorkspace, Mutation, MutationContext,
-    MutationFeasibilityService, MutationProposal, ProjectDescriptor, QualifiedName,
-    SemanticChangeSet, SemanticEdit, SemanticElementKind, SemanticLegalityRequest,
-    SemanticMutation, SemanticNextActionsRequest, SemanticTransaction, SessionError,
-    TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
+    ForkElement, Graph, GraphScope, KirDocument, L2ExplorerRequestDto, LibraryProviderConfig,
+    MetamodelAttributeRegistry, MetatypeExplorerRequestDto, ModelFork, ModelSession,
+    ModelWorkspace, Mutation, MutationContext, MutationFeasibilityService, MutationProposal,
+    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticElementKind,
+    SemanticLegalityRequest, SemanticMutation, SemanticNextActionsRequest, SemanticTransaction,
+    SessionError, TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
     collect_specialization_ancestors, default_language_profile, element_metatype,
     generate_python_wrappers, graph_view, l2_explorer_view, library_tree_view,
     metatype_explorer_view, model_metadata_view, resolve_project_descriptor_context, search_view,
@@ -1341,6 +1341,12 @@ fn project_sources_from_descriptor(descriptor_path: &Path) -> PyResult<ProjectSo
     let descriptor: ProjectDescriptor =
         serde_json::from_str(&content).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let files = project_source_files(root, Some(&descriptor))?;
+    if descriptor_uses_only_bundled_stdlib(&descriptor) {
+        return Ok(ProjectSources {
+            files,
+            library_context_document: Some(default_stdlib_document()?.clone()),
+        });
+    }
     let context = resolve_project_descriptor_context(descriptor_path)
         .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
     let library_context_document = if context.library_context_document.elements.is_empty() {
@@ -1352,6 +1358,16 @@ fn project_sources_from_descriptor(descriptor_path: &Path) -> PyResult<ProjectSo
         files,
         library_context_document,
     })
+}
+
+fn descriptor_uses_only_bundled_stdlib(descriptor: &ProjectDescriptor) -> bool {
+    !descriptor.dependencies.is_empty()
+        && descriptor.dependencies.iter().all(|dependency| {
+            matches!(
+                dependency.provider.as_ref(),
+                None | Some(LibraryProviderConfig::BundledStdlib)
+            )
+        })
 }
 
 fn project_source_files(
@@ -4240,6 +4256,48 @@ mod tests {
             );
             std::fs::remove_dir_all(root).unwrap();
         });
+    }
+
+    #[cfg(feature = "embed-stdlib")]
+    #[test]
+    fn descriptor_bundled_stdlib_uses_embedded_context() {
+        let root = temp_dir("descriptor_bundled_stdlib");
+        write_file(
+            &root.join("model").join("main.sysml"),
+            "package Demo { import ScalarValues::*; }\n",
+        );
+        write_file(
+            &root.join(".project.json"),
+            r#"{
+  "schema": "dev.mercurio.project.v2",
+  "version": 2,
+  "model": {
+    "entrypoints": ["model/main.sysml"]
+  },
+  "dependencies": [
+    {
+      "id": "stdlib",
+      "role": "baseline",
+      "provider": {
+        "kind": "bundled_stdlib"
+      }
+    }
+  ]
+}"#,
+        );
+
+        let sources = super::project_sources_from_descriptor(&root.join(".project.json")).unwrap();
+
+        assert!(sources.library_context_document.is_some());
+        assert!(
+            !sources
+                .library_context_document
+                .as_ref()
+                .unwrap()
+                .elements
+                .is_empty()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
