@@ -30,10 +30,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: mercurio-host-adapters
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-foundation
+          path: mercurio-foundation
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-sysml
+          path: mercurio-sysml
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          working-directory: crates/mercurio-python
+          working-directory: mercurio-host-adapters/crates/mercurio-python
           args: >-
             --release
             --out dist
@@ -42,7 +52,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: python-wheels-${{ matrix.target }}
-          path: crates/mercurio-python/dist/*.whl
+          path: mercurio-host-adapters/crates/mercurio-python/dist/*.whl
 
   github-release:
     needs: wheels
