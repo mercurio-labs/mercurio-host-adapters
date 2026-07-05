@@ -111,13 +111,13 @@ with mercurio.open("C:/models/demo") as model:
 | `run_analysis_report(case_id, *, run_id=None) -> AnalysisRunReport` | Run an analysis case and return the full report. |
 | `run_analysis(case_id) -> SimulationTrace` | Convenience for `run_analysis_report(...).simulation_trace()`. |
 | `model_metadata() -> JsonObject` | Return model metadata or raw model object, depending on backend. |
-| `graph(scope="l2") -> JsonObject` | Return the shared graph view. |
+| `graph(scope="model") -> JsonObject` | Return the shared graph view. |
 | `search(query: str) -> list[JsonObject]` | Search model elements. |
 | `element_details(element_id: str) -> JsonObject` | Return detailed element information. |
-| `l2_explorer(seed_id, *, expanded_parents=None, expanded_children=None, include_reference_edges=True) -> JsonObject` | Return the L2 explorer graph for a seed element. |
+| `model_explorer(seed_id, *, expanded_parents=None, expanded_children=None, include_reference_edges=True) -> JsonObject` | Return the Model explorer graph for a seed element. |
 | `metatype_explorer(seed_id, *, expanded_parents=None, expanded_children=None) -> JsonObject` | Return the metatype explorer graph for a seed element. |
-| `render_view(document: JsonObject) -> JsonObject` | Render a Mercurio view document. Native mode currently supports parameterized `explorer.l2` and `explorer.metatype`. |
-| `l2_explorer_view(...) -> JsonObject` | Render an `explorer.l2` view document. |
+| `render_view(document: JsonObject) -> JsonObject` | Render a Mercurio view document with a typed `model`, `diagram`, or `table` payload. |
+| `model_explorer_view(...) -> JsonObject` | Render an `explorer.model` view document. |
 | `metatype_explorer_view(...) -> JsonObject` | Render an `explorer.metatype` view document. |
 | `semantic_snapshot_json() -> str` | Return native semantic snapshot JSON. Requires native mode. |
 | `run_cell(source, *, kind="query", language="mercurio_dsl", parameters=None, cell_id=None, session_id=None) -> CellRunReport` | Run through the shared session/cell API. |
@@ -276,8 +276,8 @@ variant.
 | `to_records(refs=None) -> list[JsonObject]` | Export selected refs to records. |
 | `to_frame(refs=None) -> pandas.DataFrame` | Export to pandas; raises if pandas is not installed. |
 | `graph(relation="containment") -> JsonObject` | Return simple containment or specialization graph. |
-| `model_metadata()`, `graph_view(scope="l2")`, `search(query)`, `element_details(element_id)` | Shared exploration APIs. |
-| `l2_explorer(...)`, `metatype_explorer(...)`, `render_view(document)` | Shared explorer/view APIs. |
+| `model_metadata()`, `graph_view(scope="model")`, `search(query)`, `element_details(element_id)` | Shared exploration APIs. |
+| `model_explorer(...)`, `metatype_explorer(...)`, `render_view(document)` | Shared explorer/view APIs. |
 | `run_cell(...)`, `dsl(source)`, `query_dsl(source)` | Shared DSL query APIs. |
 | `run_action_dsl(...)`, `action_dsl(source)`, `preview_dsl(source)` | Shared DSL action-preview APIs. |
 | `run_analysis_dsl(...)`, `analysis_dsl(...)` | Shared DSL analysis APIs. |
@@ -325,7 +325,7 @@ raises `StaleSemanticRefError`; recompile and resolve a fresh ref first.
 | `source_fingerprint: str` | Hash of rendered source files. |
 | `save(path=None) -> None` | Write source files. `path` is optional only when opened from a project. |
 | `run_cell(...)`, `query(...)`, `dsl(...)`, `query_dsl(...)`, `run_action_dsl(...)`, `action_dsl(...)`, `preview_dsl(...)`, `run_analysis_dsl(...)`, `analysis_dsl(...)`, `dsl_schema()` | Compile current source and run shared cell/DSL APIs. |
-| `model_metadata()`, `graph_view(scope="l2")`, `search(query)`, `element_details(element_id)`, `l2_explorer(...)`, `metatype_explorer(...)`, `render_view(document)` | Compile current source and run shared exploration/view APIs. |
+| `model_metadata()`, `graph_view(scope="model")`, `search(query)`, `element_details(element_id)`, `model_explorer(...)`, `metatype_explorer(...)`, `render_view(document)` | Compile current source and run shared exploration/view APIs. |
 | `trade_study(name) -> TradeStudy` | Start a named variant collection. |
 | `simulation(name) -> SimulationConfiguration` | Create a declarative simulation configuration bound to source. |
 
@@ -345,7 +345,7 @@ raises `StaleSemanticRefError`; recompile and resolve a fresh ref first.
 | `Variant.assert_base_current() -> None` | Raise if base is stale. |
 | `Variant.simulation(name) -> SimulationConfiguration` | Create declarative simulation config. |
 | `Variant.run_cell(...)`, `query(...)`, `dsl(...)`, `query_dsl(...)`, `run_action_dsl(...)`, `action_dsl(...)`, `preview_dsl(...)`, `run_analysis_dsl(...)`, `analysis_dsl(...)`, `dsl_schema()` | Compile overlay and run shared cell/DSL APIs. Most accept `allow_stale_base`. |
-| `Variant.model_metadata()`, `graph_view(...)`, `search(...)`, `element_details(...)`, `l2_explorer(...)`, `metatype_explorer(...)`, `render_view(...)` | Compile overlay and run shared exploration/view APIs. Most accept `allow_stale_base`. |
+| `Variant.model_metadata()`, `graph_view(...)`, `search(...)`, `element_details(...)`, `model_explorer(...)`, `metatype_explorer(...)`, `render_view(...)` | Compile overlay and run shared exploration/view APIs. Most accept `allow_stale_base`. |
 
 ### `SimulationConfiguration`
 
@@ -579,7 +579,7 @@ Project-scoped HTTP convenience layer.
 | --- | --- |
 | `project_id`, `workspace_id` | Backend workspace id. |
 | `model()`, `graph(scope=None)`, `element(element_id)`, `search(query_text)` | Model read APIs. |
-| `render_view(document)`, `l2_explorer(...)`, `metatype_explorer(...)` | View/explorer APIs. |
+| `render_view(document)`, `model_explorer(...)`, `metatype_explorer(...)` | View/explorer APIs. |
 | `mounted_library_trees() -> list[JsonObject]` | Mounted library tree payloads. |
 | `files()`, `read_file(path)`, `save_file(path, content)` | Editor file APIs. |
 | `parse_preview(path, content)`, `compile_file_preview(path, content)`, `lint_preview(path, content)`, `format_preview(path, content)`, `refresh(path)` | Editor preview APIs. |
@@ -629,11 +629,11 @@ define the lower-level native surface.
 | `SemanticModel.from_kir_json(content)` | Create from KIR JSON. |
 | `SemanticModel.element(element_id)`, `elements()`, `element_count()` | Semantic element access. |
 | `semantic_snapshot_json()`, `generate_python_wrappers(module_name)` | Snapshot and wrapper generation. |
-| `model_metadata_json()`, `graph_view_json(scope=None)`, `search_json(query)`, `element_details_json(element_id)`, `l2_explorer_json(request_json)`, `metatype_explorer_json(request_json)`, `library_tree_json()` | Exploration payloads as JSON strings. |
+| `model_metadata_json()`, `graph_view_json(scope=None)`, `search_json(query)`, `element_details_json(element_id)`, `model_explorer_json(request_json)`, `metatype_explorer_json(request_json)`, `library_tree_json()` | Exploration payloads as JSON strings. |
 | `dsl_query_json(source)`, `dsl_schema_json()`, `run_cell_json(request_json)`, `preview_transaction_json(request_json)` | DSL/session payloads as JSON strings. |
 | `PyWorkspace.open(path)` | Native workspace open. |
 | `PyWorkspace.model()`, `graph()`, `parts()`, `element(id)`, `compile()` | Native workspace raw/model access. |
-| `PyWorkspace.model_metadata_json()`, `graph_view_json(scope=None)`, `search_json(query)`, `element_details_json(element_id)`, `l2_explorer_json(request_json)`, `metatype_explorer_json(request_json)`, `library_tree_json()`, `dsl_query_json(source)`, `dsl_schema_json()`, `run_cell_json(request_json)`, `analysis_specs_json()`, `analysis_run_json(case_id, run_id)` | Native workspace JSON APIs. |
+| `PyWorkspace.model_metadata_json()`, `graph_view_json(scope=None)`, `search_json(query)`, `element_details_json(element_id)`, `model_explorer_json(request_json)`, `metatype_explorer_json(request_json)`, `library_tree_json()`, `dsl_query_json(source)`, `dsl_schema_json()`, `run_cell_json(request_json)`, `analysis_specs_json()`, `analysis_run_json(case_id, run_id)` | Native workspace JSON APIs. |
 
 ## Capability SDK: `mercurio.capability`
 
@@ -725,3 +725,4 @@ Validation constants:
   analysis cases.
 - Sidecar DTOs use REST/KIR payloads under the hood. For raw payloads, expect
   backend schema evolution and prefer typed helpers when available.
+

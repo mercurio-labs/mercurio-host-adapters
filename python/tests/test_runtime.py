@@ -93,7 +93,7 @@ class FakeNativeWorkspace:
             "truncated": False,
         })
 
-    def l2_explorer_json(self, request_json: str) -> str:
+    def model_explorer_json(self, request_json: str) -> str:
         request = json.loads(request_json)
         return json.dumps({
             "seed_id": request["seed_id"],
@@ -235,12 +235,13 @@ class FakeProject:
 
     def render_view(self, document):
         self.render_requests.append(document)
-        if document["kind"] == "explorer.l2":
+        model = document["model"]
+        if document["kind"] == "explorer.model":
             return {
-                "kind": "explorer.l2",
+                "kind": "explorer.model",
                 "document": document,
-                "l2Explorer": {
-                    "seed_id": document["parameters"]["seedId"],
+                "modelExplorer": {
+                    "seed_id": model["root"],
                     "nodes": [],
                     "edges": [],
                 },
@@ -249,23 +250,41 @@ class FakeProject:
             "kind": "explorer.metatype",
             "document": document,
             "metatypeExplorer": {
-                "seed_id": document["parameters"]["seedId"],
+                "seed_id": model["root"],
                 "nodes": [],
                 "edges": [],
             },
         }
 
-    def l2_explorer(self, seed_id, **kwargs):
+    def model_explorer(self, seed_id, **kwargs):
         response = self.render_view({
-            "kind": "explorer.l2",
-            "parameters": {"seedId": seed_id, **kwargs},
+            "schema": "mercurio.view.v1",
+            "version": 1,
+            "kind": "explorer.model",
+            "mode": "visualization",
+            "model": {
+                "version": 1,
+                "kind": "model_explorer",
+                "title": "Model Explorer",
+                "root": seed_id,
+                **kwargs,
+            },
         })
-        return response["l2Explorer"]
+        return response["modelExplorer"]
 
     def metatype_explorer(self, seed_id, **kwargs):
         response = self.render_view({
+            "schema": "mercurio.view.v1",
+            "version": 1,
             "kind": "explorer.metatype",
-            "parameters": {"seedId": seed_id, **kwargs},
+            "mode": "visualization",
+            "model": {
+                "version": 1,
+                "kind": "metatype_explorer",
+                "title": "Metatype Explorer",
+                "root": seed_id,
+                **kwargs,
+            },
         })
         return response["metatypeExplorer"]
 
@@ -402,7 +421,7 @@ class RuntimeModelTests(unittest.TestCase):
         self.assertEqual(model.search("vehicle")[0]["id"], "type.Demo.Vehicle")
         self.assertEqual(model.element_details("type.Demo.Vehicle")["label"], "Vehicle")
         self.assertEqual(
-            model.l2_explorer("type.Demo.Vehicle")["seed_id"],
+            model.model_explorer("type.Demo.Vehicle")["seed_id"],
             "type.Demo.Vehicle",
         )
         rendered = model.metatype_explorer_view("type.Demo.Vehicle")
@@ -482,7 +501,7 @@ class RuntimeModelTests(unittest.TestCase):
         self.assertEqual(model.search("req")[0]["label"], "req")
         self.assertEqual(model.element_details("type.Demo.Requirement")["label"], "Requirement")
         self.assertEqual(
-            model.l2_explorer("type.Demo.Requirement")["seed_id"],
+            model.model_explorer("type.Demo.Requirement")["seed_id"],
             "type.Demo.Requirement",
         )
         rendered = model.render_view({
@@ -490,7 +509,12 @@ class RuntimeModelTests(unittest.TestCase):
             "version": 1,
             "kind": "explorer.metatype",
             "mode": "visualization",
-            "parameters": {"seedId": "type.Demo.Requirement"},
+            "model": {
+                "version": 1,
+                "kind": "metatype_explorer",
+                "title": "Metatype Explorer",
+                "root": "type.Demo.Requirement",
+            },
         })
         self.assertEqual(rendered["metatypeExplorer"]["seed_id"], "type.Demo.Requirement")
 
@@ -554,3 +578,4 @@ class RuntimeModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -519,13 +519,27 @@ def _explorer_request(
     return request
 
 
-def _view_document(kind: str, parameters: Mapping[str, Any]) -> JsonObject:
+def _model_view_document(kind: str, title: str, **spec: Any) -> JsonObject:
+    model_kind = {
+        "model.metadata": "metadata",
+        "model.graph": "graph",
+        "model.search": "search",
+        "model.element_details": "element_details",
+        "model.library_tree": "library_tree",
+        "explorer.model": "model_explorer",
+        "explorer.metatype": "metatype_explorer",
+    }[kind]
     return {
         "schema": "mercurio.view.v1",
         "version": 1,
         "kind": kind,
         "mode": "visualization",
-        "parameters": dict(parameters),
+        "model": {
+            "version": 1,
+            "kind": model_kind,
+            "title": title,
+            **spec,
+        },
     }
 
 
@@ -611,7 +625,7 @@ class CompiledModel:
     def model_metadata(self) -> JsonObject:
         return _native_json_object(self._native_model, "model_metadata_json")
 
-    def graph_view(self, scope: str = "l2") -> JsonObject:
+    def graph_view(self, scope: str = "model") -> JsonObject:
         return _native_json_object(self._native_model, "graph_view_json", scope)
 
     def search(self, query: str) -> list[JsonObject]:
@@ -620,7 +634,10 @@ class CompiledModel:
     def element_details(self, element_id: str) -> JsonObject:
         return _native_json_object(self._native_model, "element_details_json", element_id)
 
-    def l2_explorer(
+    def library_tree(self) -> list[JsonObject]:
+        return _native_json_list(self._native_model, "library_tree_json")
+
+    def model_explorer(
         self,
         seed_id: str,
         *,
@@ -636,7 +653,7 @@ class CompiledModel:
         )
         return _native_json_object(
             self._native_model,
-            "l2_explorer_json",
+            "model_explorer_json",
             _canonical_json(request),
         )
 
@@ -660,30 +677,51 @@ class CompiledModel:
 
     def render_view(self, document: Mapping[str, Any]) -> JsonObject:
         kind = str(document.get("kind") or "")
-        parameters = document.get("parameters")
-        if not isinstance(parameters, Mapping):
-            parameters = {}
-        if kind == "explorer.l2":
-            explorer = self.l2_explorer(
-                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
-                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or (),
-                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or (),
+        model = document.get("model")
+        if not isinstance(model, Mapping):
+            raise RuntimeError("native render_view() requires a typed model view payload")
+        model_kind = str(model.get("kind") or "")
+        if kind == "model.metadata" and model_kind == "metadata":
+            return {"kind": kind, "document": dict(document), "modelMetadata": self.model_metadata()}
+        if kind == "model.graph" and model_kind == "graph":
+            return {
+                "kind": kind,
+                "document": dict(document),
+                "graph": self.graph_view(str(model.get("graph_scope") or model.get("graphScope") or "model")),
+            }
+        if kind == "model.search" and model_kind == "search":
+            return {
+                "kind": kind,
+                "document": dict(document),
+                "search": self.search(str(model.get("query") or "")),
+            }
+        if kind == "model.element_details" and model_kind == "element_details":
+            return {
+                "kind": kind,
+                "document": dict(document),
+                "elementDetails": self.element_details(str(model.get("root") or "")),
+            }
+        if kind == "model.library_tree" and model_kind == "library_tree":
+            return {"kind": kind, "document": dict(document), "libraryTree": self.library_tree()}
+        if kind == "explorer.model" and model_kind == "model_explorer":
+            explorer = self.model_explorer(
+                str(model.get("root") or ""),
+                expanded_parents=model.get("expanded_parents") or model.get("expandedParents") or (),
+                expanded_children=model.get("expanded_children") or model.get("expandedChildren") or (),
                 include_reference_edges=bool(
-                    parameters.get("includeReferenceEdges", parameters.get("include_reference_edges", True))
+                    model.get("include_reference_edges", model.get("includeReferenceEdges", True))
                 ),
             )
-            return {"kind": kind, "document": dict(document), "l2Explorer": explorer}
-        if kind == "explorer.metatype":
+            return {"kind": kind, "document": dict(document), "modelExplorer": explorer}
+        if kind == "explorer.metatype" and model_kind == "metatype_explorer":
             explorer = self.metatype_explorer(
-                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
-                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or (),
-                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or (),
+                str(model.get("root") or ""),
+                expanded_parents=model.get("expanded_parents") or model.get("expandedParents") or (),
+                expanded_children=model.get("expanded_children") or model.get("expandedChildren") or (),
             )
             return {"kind": kind, "document": dict(document), "metatypeExplorer": explorer}
         raise RuntimeError(
-            "native render_view() currently supports parameterized explorer.l2 "
-            "and explorer.metatype views; use a sidecar-backed model for full "
-            "view rendering"
+            f"native render_view() does not support model view kind {kind!r}"
         )
 
     def run_cell(
@@ -1148,7 +1186,7 @@ class ProjectSession:
     def model_metadata(self) -> JsonObject:
         return self.compile().model_metadata()
 
-    def graph_view(self, scope: str = "l2") -> JsonObject:
+    def graph_view(self, scope: str = "model") -> JsonObject:
         return self.compile().graph_view(scope)
 
     def search(self, query: str) -> list[JsonObject]:
@@ -1157,7 +1195,7 @@ class ProjectSession:
     def element_details(self, element_id: str) -> JsonObject:
         return self.compile().element_details(element_id)
 
-    def l2_explorer(
+    def model_explorer(
         self,
         seed_id: str,
         *,
@@ -1165,7 +1203,7 @@ class ProjectSession:
         expanded_children: Iterable[str] | None = None,
         include_reference_edges: bool = True,
     ) -> JsonObject:
-        return self.compile().l2_explorer(
+        return self.compile().model_explorer(
             seed_id,
             expanded_parents=expanded_parents,
             expanded_children=expanded_children,
@@ -1404,7 +1442,7 @@ class Variant:
     def model_metadata(self, *, allow_stale_base: bool = False) -> JsonObject:
         return self.compile(allow_stale_base=allow_stale_base).model_metadata()
 
-    def graph_view(self, scope: str = "l2", *, allow_stale_base: bool = False) -> JsonObject:
+    def graph_view(self, scope: str = "model", *, allow_stale_base: bool = False) -> JsonObject:
         return self.compile(allow_stale_base=allow_stale_base).graph_view(scope)
 
     def search(self, query: str, *, allow_stale_base: bool = False) -> list[JsonObject]:
@@ -1413,7 +1451,7 @@ class Variant:
     def element_details(self, element_id: str, *, allow_stale_base: bool = False) -> JsonObject:
         return self.compile(allow_stale_base=allow_stale_base).element_details(element_id)
 
-    def l2_explorer(
+    def model_explorer(
         self,
         seed_id: str,
         *,
@@ -1422,7 +1460,7 @@ class Variant:
         include_reference_edges: bool = True,
         allow_stale_base: bool = False,
     ) -> JsonObject:
-        return self.compile(allow_stale_base=allow_stale_base).l2_explorer(
+        return self.compile(allow_stale_base=allow_stale_base).model_explorer(
             seed_id,
             expanded_parents=expanded_parents,
             expanded_children=expanded_children,
@@ -1534,3 +1572,4 @@ class SimulationConfiguration:
             "simulation execution is not wired to the layered Python API yet; "
             "use to_dict() to persist declarative simulation configuration"
         )
+

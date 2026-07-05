@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use mercurio_core::graph::Graph;
 use mercurio_core::metamodel::MetamodelAttributeRegistry;
-pub use mercurio_core::views::{
+pub use mercurio_views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ExplorerAttributeDto,
     InheritedPropertyValueDto, element_details,
 };

@@ -42,7 +42,7 @@ class MercurioProject:
     def render_view(self, document: JsonObject) -> JsonObject:
         return self.client.post(self._path("/views/render"), document)
 
-    def l2_explorer(
+    def model_explorer(
         self,
         seed_id: str,
         *,
@@ -51,19 +51,18 @@ class MercurioProject:
         include_reference_edges: bool = True,
     ) -> JsonObject:
         response = self.render_view(
-            _view_document(
-                "explorer.l2",
-                {
-                    "seedId": seed_id,
-                    "expandedParents": list(expanded_parents or ()),
-                    "expandedChildren": list(expanded_children or ()),
-                    "includeReferenceEdges": include_reference_edges,
-                },
+            _model_view_document(
+                "explorer.model",
+                "Model Explorer",
+                root=seed_id,
+                expanded_parents=list(expanded_parents or ()),
+                expanded_children=list(expanded_children or ()),
+                include_reference_edges=include_reference_edges,
             )
         )
-        explorer = response.get("l2Explorer")
+        explorer = response.get("modelExplorer")
         if not isinstance(explorer, dict):
-            raise RuntimeError("L2 explorer view did not return l2Explorer")
+            raise RuntimeError("Model explorer view did not return modelExplorer")
         return explorer
 
     def metatype_explorer(
@@ -74,13 +73,12 @@ class MercurioProject:
         expanded_children: list[str] | None = None,
     ) -> JsonObject:
         response = self.render_view(
-            _view_document(
+            _model_view_document(
                 "explorer.metatype",
-                {
-                    "seedId": seed_id,
-                    "expandedParents": list(expanded_parents or ()),
-                    "expandedChildren": list(expanded_children or ()),
-                },
+                "Metatype Explorer",
+                root=seed_id,
+                expanded_parents=list(expanded_parents or ()),
+                expanded_children=list(expanded_children or ()),
             )
         )
         explorer = response.get("metatypeExplorer")
@@ -347,14 +345,29 @@ class MercurioProject:
         ]
 
 
-def _view_document(kind: str, parameters: JsonObject) -> JsonObject:
+def _model_view_document(kind: str, title: str, **spec) -> JsonObject:
+    model_kind = {
+        "model.metadata": "metadata",
+        "model.graph": "graph",
+        "model.search": "search",
+        "model.element_details": "element_details",
+        "model.library_tree": "library_tree",
+        "explorer.model": "model_explorer",
+        "explorer.metatype": "metatype_explorer",
+    }[kind]
     return {
         "schema": "mercurio.view.v1",
         "version": 1,
         "kind": kind,
         "mode": "visualization",
-        "parameters": dict(parameters),
+        "model": {
+            "version": 1,
+            "kind": model_kind,
+            "title": title,
+            **spec,
+        },
     }
 
 
 MercurioWorkspace = MercurioProject
+

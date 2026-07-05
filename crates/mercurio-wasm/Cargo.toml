@@ -9,9 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 console_error_panic_hook.workspace = true
-mercurio-core = { package = "mercurio-foundation", path = "../../../mercurio-foundation/crates/mercurio-foundation", default-features = false }
+mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core", default-features = false }
 mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
-mercurio-requirements = { path = "../../../mercurio-sysml/crates/mercurio-requirements" }
 mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation" }
 mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }

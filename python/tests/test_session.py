@@ -36,8 +36,8 @@ class FakeDslSemanticModel(FakeSemanticModel):
             "user_element_count": len(self._rows),
             "layers": [2],
             "relations": [],
-            "graph_scopes": ["l2", "l2_plus_context", "full"],
-            "default_graph_scope": "l2",
+            "graph_scopes": ["model", "model_plus_context", "full"],
+            "default_graph_scope": "model",
         })
 
     def graph_view_json(self, scope: str | None = None) -> str:
@@ -53,7 +53,7 @@ class FakeDslSemanticModel(FakeSemanticModel):
                 for row in self._rows
             ],
             "edges": [],
-            "scope": scope or "l2",
+            "scope": scope or "model",
         })
 
     def search_json(self, query: str) -> str:
@@ -89,7 +89,7 @@ class FakeDslSemanticModel(FakeSemanticModel):
                 })
         raise KeyError(element_id)
 
-    def l2_explorer_json(self, request_json: str) -> str:
+    def model_explorer_json(self, request_json: str) -> str:
         request = json.loads(request_json)
         return json.dumps({
             "seed_id": request["seed_id"],
@@ -509,7 +509,7 @@ class SessionLayerTests(unittest.TestCase):
             "Vehicle",
         )
         self.assertEqual(
-            model.l2_explorer("VehicleExample.Vehicle")["nodes"][0]["is_seed"],
+            model.model_explorer("VehicleExample.Vehicle")["nodes"][0]["is_seed"],
             True,
         )
         rendered = model.render_view({
@@ -517,7 +517,12 @@ class SessionLayerTests(unittest.TestCase):
             "version": 1,
             "kind": "explorer.metatype",
             "mode": "visualization",
-            "parameters": {"seedId": "VehicleExample.Vehicle"},
+            "model": {
+                "version": 1,
+                "kind": "metatype_explorer",
+                "title": "Metatype Explorer",
+                "root": "VehicleExample.Vehicle",
+            },
         })
         self.assertEqual(rendered["metatypeExplorer"]["seed_id"], "VehicleExample.Vehicle")
 
@@ -683,3 +688,4 @@ class SessionLayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -32,7 +32,7 @@ Main exports:
 - `lint(input, language, options)`
 - `formatText(input, language)`
 - `renderDiagram(document, request)`
-- `requirementsTable(document)`
+- `renderTable(document, request)`
 - `queryRuntime(document, query)`
 - `runAssessment(document, spec)`
 - `new MercurioSession(options)`

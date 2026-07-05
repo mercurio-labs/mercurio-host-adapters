@@ -20,7 +20,7 @@ from .session import (
     _cell_report_from_json,
     _cell_request,
     _explorer_request,
-    _view_document,
+    _model_view_document,
 )
 
 
@@ -47,7 +47,7 @@ class NativeRawWorkspace:
         self._workspace = workspace
 
     def graph(self, scope: str | None = None) -> JsonObject:
-        if scope not in (None, "l2"):
+        if scope not in (None, "model"):
             raise ValueError("native raw graph only supports the default compiled graph scope")
         return json.loads(self._workspace.graph())
 
@@ -199,7 +199,7 @@ class Model:
             return _json_object(workspace.model_metadata_json(), "model metadata")
         return self._project.model()
 
-    def graph(self, scope: str = "l2") -> JsonObject:
+    def graph(self, scope: str = "model") -> JsonObject:
         workspace = getattr(self, "_workspace", None)
         if workspace is not None:
             return _json_object(workspace.graph_view_json(scope), "graph view")
@@ -216,6 +216,18 @@ class Model:
         if workspace is not None:
             return _json_object(workspace.element_details_json(element_id), "element details")
         return self._project.element(element_id)
+
+    def library_tree(self) -> list[JsonObject]:
+        workspace = getattr(self, "_workspace", None)
+        if workspace is not None:
+            return _json_object_list(workspace.library_tree_json(), "library tree")
+        response = self._project.render_view(
+            _model_view_document("model.library_tree", "Library Tree")
+        )
+        tree = response.get("libraryTree")
+        if not isinstance(tree, list):
+            raise RuntimeError("Library tree view did not return libraryTree")
+        return [dict(item) for item in tree if isinstance(item, dict)]
 
     def check_semantic_legality(
         self,
@@ -328,7 +340,7 @@ class Model:
             }
         )
 
-    def l2_explorer(
+    def model_explorer(
         self,
         seed_id: str,
         *,
@@ -345,10 +357,10 @@ class Model:
                 include_reference_edges=include_reference_edges,
             )
             return _json_object(
-                workspace.l2_explorer_json(_canonical_json(request)),
-                "L2 explorer",
+                workspace.model_explorer_json(_canonical_json(request)),
+                "Model explorer",
             )
-        return self._project.l2_explorer(
+        return self._project.model_explorer(
             seed_id,
             expanded_parents=expanded_parents,
             expanded_children=expanded_children,
@@ -384,33 +396,48 @@ class Model:
         if workspace is None:
             return self._project.render_view(document)
         kind = str(document.get("kind") or "")
-        parameters = document.get("parameters")
-        if not isinstance(parameters, dict):
-            parameters = {}
-        if kind == "explorer.l2":
-            explorer = self.l2_explorer(
-                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
-                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or [],
-                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or [],
+        model = document.get("model")
+        if not isinstance(model, dict):
+            raise RuntimeError("native render_view() requires a typed model view payload")
+        model_kind = str(model.get("kind") or "")
+        if kind == "model.metadata" and model_kind == "metadata":
+            return {"kind": kind, "document": dict(document), "modelMetadata": self.model_metadata()}
+        if kind == "model.graph" and model_kind == "graph":
+            return {
+                "kind": kind,
+                "document": dict(document),
+                "graph": self.graph_view(str(model.get("graph_scope") or model.get("graphScope") or "model")),
+            }
+        if kind == "model.search" and model_kind == "search":
+            return {"kind": kind, "document": dict(document), "search": self.search(str(model.get("query") or ""))}
+        if kind == "model.element_details" and model_kind == "element_details":
+            return {
+                "kind": kind,
+                "document": dict(document),
+                "elementDetails": self.element_details(str(model.get("root") or "")),
+            }
+        if kind == "model.library_tree" and model_kind == "library_tree":
+            return {"kind": kind, "document": dict(document), "libraryTree": self.library_tree()}
+        if kind == "explorer.model" and model_kind == "model_explorer":
+            explorer = self.model_explorer(
+                str(model.get("root") or ""),
+                expanded_parents=model.get("expandedParents") or model.get("expanded_parents") or [],
+                expanded_children=model.get("expandedChildren") or model.get("expanded_children") or [],
                 include_reference_edges=bool(
-                    parameters.get("includeReferenceEdges", parameters.get("include_reference_edges", True))
+                    model.get("includeReferenceEdges", model.get("include_reference_edges", True))
                 ),
             )
-            return {"kind": kind, "document": dict(document), "l2Explorer": explorer}
-        if kind == "explorer.metatype":
+            return {"kind": kind, "document": dict(document), "modelExplorer": explorer}
+        if kind == "explorer.metatype" and model_kind == "metatype_explorer":
             explorer = self.metatype_explorer(
-                str(parameters.get("seedId") or parameters.get("seed_id") or ""),
-                expanded_parents=parameters.get("expandedParents") or parameters.get("expanded_parents") or [],
-                expanded_children=parameters.get("expandedChildren") or parameters.get("expanded_children") or [],
+                str(model.get("root") or ""),
+                expanded_parents=model.get("expandedParents") or model.get("expanded_parents") or [],
+                expanded_children=model.get("expandedChildren") or model.get("expanded_children") or [],
             )
             return {"kind": kind, "document": dict(document), "metatypeExplorer": explorer}
-        raise RuntimeError(
-            "native render_view() currently supports parameterized explorer.l2 "
-            "and explorer.metatype views; use a sidecar-backed model for full "
-            "view rendering"
-        )
+        raise RuntimeError(f"native render_view() does not support model view kind {kind!r}")
 
-    def l2_explorer_view(
+    def model_explorer_view(
         self,
         seed_id: str,
         *,
@@ -419,14 +446,13 @@ class Model:
         include_reference_edges: bool = True,
     ) -> JsonObject:
         return self.render_view(
-            _view_document(
-                "explorer.l2",
-                {
-                    "seedId": seed_id,
-                    "expandedParents": list(expanded_parents or ()),
-                    "expandedChildren": list(expanded_children or ()),
-                    "includeReferenceEdges": include_reference_edges,
-                },
+            _model_view_document(
+                "explorer.model",
+                "Model Explorer",
+                root=seed_id,
+                expanded_parents=list(expanded_parents or ()),
+                expanded_children=list(expanded_children or ()),
+                include_reference_edges=include_reference_edges,
             )
         )
 
@@ -438,13 +464,12 @@ class Model:
         expanded_children: list[str] | None = None,
     ) -> JsonObject:
         return self.render_view(
-            _view_document(
+            _model_view_document(
                 "explorer.metatype",
-                {
-                    "seedId": seed_id,
-                    "expandedParents": list(expanded_parents or ()),
-                    "expandedChildren": list(expanded_children or ()),
-                },
+                "Metatype Explorer",
+                root=seed_id,
+                expanded_parents=list(expanded_parents or ()),
+                expanded_children=list(expanded_children or ()),
             )
         )
 
@@ -593,3 +618,4 @@ def _json_object_list(raw: str, label: str) -> list[JsonObject]:
     if not isinstance(data, list):
         raise TypeError(f"{label} response must be a JSON array")
     return [dict(item) for item in data if isinstance(item, dict)]
+

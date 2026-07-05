@@ -7,7 +7,6 @@ use mercurio_core::{
     load_default_rulepacks, run_graph_assessment, run_runtime_assessment,
 };
 use mercurio_kerml::{compile_kerml_text, parse_kerml};
-use mercurio_requirements::requirements_table_view;
 use mercurio_simulation::{
     ConcurrentSimulationScenario, ConcurrentSubjectScenario, SimulationStatus,
     StateMachineScenarioEvent, list_analysis_cases, run_analysis_case, run_concurrent_simulation,
@@ -19,7 +18,10 @@ use mercurio_sysml::{
     import_sysml_api_elements, parse_sysml_recovering, project_state_machines,
     sysml_parsed_module_assessment_facts,
 };
-use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
+use mercurio_views::{
+    DiagramError, DiagramRenderRequestDto, TableError, TableRenderRequestDto, list_diagram_kinds,
+    list_table_kinds, render_diagram, render_table,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
@@ -137,6 +139,11 @@ pub fn wasm_list_diagram_kinds() -> JsValue {
     json_response(|| Ok(success(serde_json::to_value(list_diagram_kinds())?, [])))
 }
 
+#[wasm_bindgen(js_name = listTableKinds)]
+pub fn wasm_list_table_kinds() -> JsValue {
+    json_response(|| Ok(success(serde_json::to_value(list_table_kinds())?, [])))
+}
+
 #[wasm_bindgen(js_name = renderDiagram)]
 pub fn wasm_render_diagram(document: JsValue, request: JsValue) -> JsValue {
     json_response(|| {
@@ -149,15 +156,15 @@ pub fn wasm_render_diagram(document: JsValue, request: JsValue) -> JsValue {
     })
 }
 
-#[wasm_bindgen(js_name = requirementsTable)]
-pub fn wasm_requirements_table(document: JsValue) -> JsValue {
+#[wasm_bindgen(js_name = renderTable)]
+pub fn wasm_render_table(document: JsValue, request: JsValue) -> JsValue {
     json_response(|| {
         let document: KirDocument = from_js(document)?;
-        let runtime = Runtime::from_document(document)?;
-        Ok(success(
-            serde_json::to_value(requirements_table_view(runtime.graph()))?,
-            [],
-        ))
+        let request: TableRenderRequestDto = from_js(request)?;
+        let graph = Graph::from_document(document)?;
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        let view = render_table(&graph, &registry, request.spec)?;
+        Ok(success(serde_json::to_value(view)?, []))
     })
 }
 
@@ -555,14 +562,14 @@ impl MercurioSession {
         })
     }
 
-    #[wasm_bindgen(js_name = requirementsTable)]
-    pub fn requirements_table(&self) -> JsValue {
+    #[wasm_bindgen(js_name = renderTable)]
+    pub fn render_table(&self, request: JsValue) -> JsValue {
         json_response(|| {
-            let runtime = Runtime::from_document(self.merged_document()?)?;
-            Ok(success(
-                serde_json::to_value(requirements_table_view(runtime.graph()))?,
-                [],
-            ))
+            let request: TableRenderRequestDto = from_js(request)?;
+            let graph = self.graph()?;
+            let registry = MetamodelAttributeRegistry::build(&graph);
+            let view = render_table(&graph, &registry, request.spec)?;
+            Ok(success(serde_json::to_value(view)?, []))
         })
     }
 
@@ -1144,6 +1151,7 @@ impl_error!(mercurio_core::KirError, "kir");
 impl_error!(mercurio_core::RuntimeError, "runtime");
 impl_error!(mercurio_core::AssessmentError, "assessment");
 impl_error!(DiagramError, "diagram");
+impl_error!(TableError, "table");
 impl_error!(Diagnostic, "diagnostic");
 impl_error!(SysmlJsonImportError, "sysmlJsonImport");
 

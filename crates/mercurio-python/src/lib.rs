@@ -7,16 +7,14 @@ use mercurio_core::{
     AttributeWritePolicy, AuthoringProject, CapabilityRunStatus, CellKind, CellLanguage,
     CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
     CommitResult, CommitStrategy, ContainerSelector, DslAnalysisRunRequest, DslAnalysisRunSpec,
-    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, ElementView, FeasibilityStatus,
-    ForkElement, Graph, GraphScope, KirDocument, L2ExplorerRequestDto, LibraryProviderConfig,
-    MetamodelAttributeRegistry, MetatypeExplorerRequestDto, ModelFork, ModelSession,
+    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, FeasibilityStatus, ForkElement, Graph,
+    KirDocument, LibraryProviderConfig, MetamodelAttributeRegistry, ModelFork, ModelSession,
     ModelWorkspace, Mutation, MutationContext, MutationFeasibilityService, MutationProposal,
     ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticElementKind,
     SemanticLegalityRequest, SemanticMutation, SemanticNextActionsRequest, SemanticTransaction,
     SessionError, TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
     collect_specialization_ancestors, default_language_profile, element_metatype,
-    generate_python_wrappers, graph_view, l2_explorer_view, library_tree_view,
-    metatype_explorer_view, model_metadata_view, resolve_project_descriptor_context, search_view,
+    generate_python_wrappers, resolve_project_descriptor_context,
 };
 use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
@@ -26,7 +24,12 @@ use mercurio_sysml::{
     sysml_semantic_legality_service, sysml_semantic_next_actions_service,
 };
 use mercurio_view_model::{
-    ElementDetailsDto, PartDto, element_details_from_graph, parts_from_graph,
+    ElementDetailsDto, PartDto, element_details, element_details_from_graph, parts_from_graph,
+};
+use mercurio_views::{
+    ElementView, GraphScope, MetatypeExplorerRequestDto, ModelExplorerRequestDto, graph_view,
+    library_tree_view, metatype_explorer_view, model_explorer_view, model_metadata_view,
+    search_view,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -139,8 +142,8 @@ impl PyWorkspace {
         element_details_json(&self.graph, &self.registry, element_id)
     }
 
-    fn l2_explorer_json(&self, request_json: &str) -> PyResult<String> {
-        l2_explorer_json(&self.graph, request_json)
+    fn model_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        model_explorer_json(&self.graph, request_json)
     }
 
     fn metatype_explorer_json(&self, request_json: &str) -> PyResult<String> {
@@ -363,8 +366,8 @@ impl PySemanticModel {
         element_details_json(&self.graph, &self.registry, element_id)
     }
 
-    fn l2_explorer_json(&self, request_json: &str) -> PyResult<String> {
-        l2_explorer_json(&self.graph, request_json)
+    fn model_explorer_json(&self, request_json: &str) -> PyResult<String> {
+        model_explorer_json(&self.graph, request_json)
     }
 
     fn metatype_explorer_json(&self, request_json: &str) -> PyResult<String> {
@@ -1522,15 +1525,15 @@ fn element_details_json(
     registry: &MetamodelAttributeRegistry,
     element_id: &str,
 ) -> PyResult<String> {
-    let details = mercurio_core::element_details(graph, registry, element_id)
+    let details = element_details(graph, registry, element_id)
         .ok_or_else(|| PyValueError::new_err(format!("element not found: {element_id}")))?;
     to_json_string(&details)
 }
 
-fn l2_explorer_json(graph: &Graph, request_json: &str) -> PyResult<String> {
-    let request: L2ExplorerRequestDto =
+fn model_explorer_json(graph: &Graph, request_json: &str) -> PyResult<String> {
+    let request: ModelExplorerRequestDto =
         serde_json::from_str(request_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let view = l2_explorer_view(graph, &request)
+    let view = model_explorer_view(graph, &request)
         .ok_or_else(|| PyValueError::new_err(format!("element not found: {}", request.seed_id)))?;
     to_json_string(&view)
 }
@@ -2365,7 +2368,7 @@ mod tests {
 
     use super::{
         PyModelBuilder, PyModelWorkspace, PyWorkspace, compile_workspace_path, dsl_query_json,
-        dsl_schema_json, graph_view_json, l2_explorer_json, metatype_explorer_json,
+        dsl_schema_json, graph_view_json, metatype_explorer_json, model_explorer_json,
         model_metadata_json, preview_transaction_json, project_sources_from_descriptor,
         run_cell_json, search_json, semantic_snapshot_rows,
     };
@@ -2555,7 +2558,7 @@ mod tests {
         let metadata: serde_json::Value =
             serde_json::from_str(&model_metadata_json(&graph, &document).unwrap()).unwrap();
         let scoped_graph: serde_json::Value =
-            serde_json::from_str(&graph_view_json(&graph, Some("l2")).unwrap()).unwrap();
+            serde_json::from_str(&graph_view_json(&graph, Some("model")).unwrap()).unwrap();
         let search: serde_json::Value =
             serde_json::from_str(&search_json(&graph, "vehicle").unwrap()).unwrap();
 
@@ -2585,15 +2588,15 @@ mod tests {
         })
         .to_string();
 
-        let l2: serde_json::Value =
-            serde_json::from_str(&l2_explorer_json(&graph, &l2_request).unwrap()).unwrap();
+        let Model: serde_json::Value =
+            serde_json::from_str(&model_explorer_json(&graph, &l2_request).unwrap()).unwrap();
         let metatype: serde_json::Value = serde_json::from_str(
             &metatype_explorer_json(&graph, &registry, &metatype_request).unwrap(),
         )
         .unwrap();
 
-        assert_eq!(l2["seed_id"], serde_json::json!("type.Demo.Vehicle"));
-        assert_eq!(l2["nodes"][0]["is_seed"], serde_json::json!(true));
+        assert_eq!(Model["seed_id"], serde_json::json!("type.Demo.Vehicle"));
+        assert_eq!(Model["nodes"][0]["is_seed"], serde_json::json!(true));
         assert_eq!(metatype["seed_id"], serde_json::json!("type.Demo.Vehicle"));
     }
 

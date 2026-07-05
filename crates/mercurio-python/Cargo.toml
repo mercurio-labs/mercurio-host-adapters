@@ -12,10 +12,11 @@ crate-type = ["cdylib", "rlib"]
 embed-stdlib = ["mercurio-sysml/embed-stdlib"]
 
 [dependencies]
-mercurio-core = { package = "mercurio-foundation", path = "../../../mercurio-foundation/crates/mercurio-foundation" }
+mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core" }
 mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation" }
 mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 mercurio-view-model = { path = "../mercurio-view-model" }
+mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }
 pyo3 = { workspace = true, features = ["abi3-py310", "extension-module"] }
 serde.workspace = true
 serde_json.workspace = true
