@@ -4,17 +4,18 @@ use std::sync::{Arc, OnceLock};
 
 use mercurio_core::runtime::Runtime;
 use mercurio_core::{
-    AttributeWritePolicy, AuthoringProject, CapabilityRunStatus, CellKind, CellLanguage,
-    CellOutput, CellOutputKind, CellRunReport, CellRunRequest, CellRunStatus, CommitMode,
-    CommitResult, CommitStrategy, ContainerSelector, DslAnalysisRunRequest, DslAnalysisRunSpec,
-    DslEngine, DslQueryRequest, DslQueryResult, ElementRef, FeasibilityStatus, ForkElement, Graph,
-    KirDocument, LibraryProviderConfig, MetamodelAttributeRegistry, ModelFork, ModelSession,
-    ModelWorkspace, Mutation, MutationContext, MutationFeasibilityService, MutationProposal,
-    ProjectDescriptor, QualifiedName, SemanticChangeSet, SemanticEdit, SemanticElementKind,
-    SemanticLegalityRequest, SemanticMutation, SemanticNextActionsRequest, SemanticTransaction,
-    SessionError, TransactionOperation, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
+    AttributeWritePolicy, AuthoringProject, CapabilityRunReport, CellRunHandlers, CellRunReport,
+    CellRunRequest, CommitMode, CommitResult, CommitStrategy, ContainerSelector,
+    DslAnalysisRunRequest, DslAnalysisRunSpec, DslCellAnalysisRequest, DslEngine, DslQueryRequest,
+    DslQueryResult, ElementRef, FeasibilityStatus, ForkElement, Graph, KirDocument,
+    LibraryProviderConfig, MetamodelAttributeRegistry, ModelFork, ModelSession, ModelWorkspace,
+    Mutation, MutationContext, MutationFeasibilityService, MutationProposal, ProjectDescriptor,
+    PythonCellScriptOutput, PythonCellScriptRequest, QualifiedName, SemanticChangeSet,
+    SemanticEdit, SemanticElementKind, SemanticLegalityRequest, SemanticMutation,
+    SemanticNextActionsRequest, SemanticTransaction, SessionError, TransactionOperation,
+    UnsupportedCellRun, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
     collect_specialization_ancestors, default_language_profile, element_metatype,
-    generate_python_wrappers, resolve_project_descriptor_context,
+    generate_python_wrappers, resolve_project_descriptor_context, run_cell_with_handlers,
 };
 use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
@@ -1627,129 +1628,71 @@ fn run_cell_json(graph: Arc<Graph>, request_json: &str) -> PyResult<String> {
 }
 
 fn run_cell_on_graph(graph: Arc<Graph>, request: CellRunRequest) -> PyResult<CellRunReport> {
-    let cell_id = request
-        .cell_id
-        .clone()
-        .unwrap_or_else(|| default_cell_id(&request));
-    match (&request.kind, request.language.as_ref()) {
-        (CellKind::Query, None | Some(CellLanguage::MercurioDsl)) => {
-            let result = native_dsl_engine()
-                .execute_query(
-                    graph,
-                    DslQueryRequest {
-                        script: request.source,
-                        script_name: None,
-                        limits: None,
-                    },
-                )
-                .map(|report| report.result)
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
-            Ok(CellRunReport {
-                session_id: request.session_id,
-                cell_id,
-                kind: CellKind::Query,
-                status: CellRunStatus::Passed,
-                outputs: vec![CellOutput {
-                    id: "result".to_string(),
-                    kind: CellOutputKind::Table,
-                    mime_type: Some("application/vnd.mercurio.dsl.query+json".to_string()),
-                    value: serde_json::to_value(result)
-                        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
-                }],
-                artifacts: Vec::new(),
-                diagnostics: Vec::new(),
-                capability_report: None,
-                metadata: BTreeMap::new(),
-            })
-        }
-        (CellKind::Action, None | Some(CellLanguage::MercurioDsl)) => {
-            let result = native_dsl_engine()
-                .execute_query(
-                    graph,
-                    DslQueryRequest {
-                        script: request.source,
-                        script_name: None,
-                        limits: None,
-                    },
-                )
-                .map(|report| dsl_query_result_to_value(report.result))
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
-            Ok(CellRunReport {
-                session_id: request.session_id,
-                cell_id,
-                kind: CellKind::Action,
-                status: CellRunStatus::Passed,
-                outputs: vec![CellOutput {
-                    id: "result".to_string(),
-                    kind: CellOutputKind::Json,
-                    mime_type: Some("application/vnd.mercurio.dsl.action-preview+json".to_string()),
-                    value: result,
-                }],
-                artifacts: Vec::new(),
-                diagnostics: Vec::new(),
-                capability_report: None,
-                metadata: BTreeMap::new(),
-            })
-        }
-        (CellKind::Analysis, None | Some(CellLanguage::MercurioDsl)) => {
-            let report = native_dsl_engine()
-                .execute_analysis_run(
-                    graph,
-                    DslAnalysisRunRequest {
-                        spec: DslAnalysisRunSpec {
-                            run_id: string_parameter(&request.parameters, "runId", "run_id")
-                                .unwrap_or_else(|| "dsl-analysis-run".to_string()),
-                            capability_id: string_parameter(
-                                &request.parameters,
-                                "capabilityId",
-                                "capability_id",
-                            )
-                            .unwrap_or_else(|| "mercurio.dsl.analysis".to_string()),
-                            script: request.source,
-                            subject_element_id: string_parameter(
-                                &request.parameters,
-                                "subjectElementId",
-                                "subject_element_id",
-                            ),
+    let query_graph = Arc::clone(&graph);
+    let action_graph = Arc::clone(&graph);
+    let analysis_graph = graph;
+    run_cell_with_handlers(
+        request,
+        CellRunHandlers {
+            dsl_query: move |source| {
+                let result = native_dsl_engine()
+                    .execute_query(
+                        Arc::clone(&query_graph),
+                        DslQueryRequest {
+                            script: source,
+                            script_name: None,
+                            limits: None,
                         },
-                        script_name: None,
-                        limits: None,
-                    },
-                )
-                .map(|report| report.report)
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
-            Ok(CellRunReport {
-                session_id: request.session_id,
-                cell_id,
-                kind: CellKind::Analysis,
-                status: cell_status_from_capability(report.status),
-                outputs: vec![CellOutput {
-                    id: "capability_report".to_string(),
-                    kind: CellOutputKind::CapabilityReport,
-                    mime_type: Some("application/vnd.mercurio.capability-run+json".to_string()),
-                    value: serde_json::to_value(&report)
-                        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
-                }],
-                artifacts: report.artifacts.clone(),
-                diagnostics: report.diagnostics.clone(),
-                capability_report: Some(report),
-                metadata: BTreeMap::new(),
-            })
-        }
-        _ => Err(PyValueError::new_err(format!(
-            "unsupported native Python cell kind/language combination: kind={:?} language={:?}",
-            request.kind, request.language
-        ))),
-    }
-}
-
-fn default_cell_id(request: &CellRunRequest) -> String {
-    match (&request.kind, request.language.as_ref()) {
-        (CellKind::Query, None | Some(CellLanguage::MercurioDsl)) => "dsl.query".to_string(),
-        (CellKind::Action, None | Some(CellLanguage::MercurioDsl)) => "dsl.action".to_string(),
-        (CellKind::Analysis, None | Some(CellLanguage::MercurioDsl)) => "dsl.analysis".to_string(),
-        _ => "cell".to_string(),
-    }
+                    )
+                    .map(|report| report.result)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                serde_json::to_value(result).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+            },
+            dsl_action: move |source| {
+                native_dsl_engine()
+                    .execute_query(
+                        Arc::clone(&action_graph),
+                        DslQueryRequest {
+                            script: source,
+                            script_name: None,
+                            limits: None,
+                        },
+                    )
+                    .map(|report| dsl_query_result_to_value(report.result))
+                    .map_err(|err| PyValueError::new_err(err.to_string()))
+            },
+            dsl_analysis: move |request: DslCellAnalysisRequest| {
+                native_dsl_engine()
+                    .execute_analysis_run(
+                        Arc::clone(&analysis_graph),
+                        DslAnalysisRunRequest {
+                            spec: DslAnalysisRunSpec {
+                                run_id: request
+                                    .run_id
+                                    .unwrap_or_else(|| "dsl-analysis-run".to_string()),
+                                capability_id: request
+                                    .capability_id
+                                    .unwrap_or_else(|| "mercurio.dsl.analysis".to_string()),
+                                script: request.query,
+                                subject_element_id: request.subject_element_id,
+                            },
+                            script_name: None,
+                            limits: None,
+                        },
+                    )
+                    .map(|report| report.report)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))
+            },
+            sysml_analysis: None::<fn(String) -> PyResult<CapabilityRunReport>>,
+            python_script: None::<fn(PythonCellScriptRequest) -> PyResult<PythonCellScriptOutput>>,
+            unsupported: |value: UnsupportedCellRun| {
+                PyValueError::new_err(format!(
+                    "unsupported native Python cell kind/language combination: kind={:?} language={:?}",
+                    value.kind, value.language
+                ))
+            },
+        },
+    )
 }
 
 fn dsl_query_result_to_value(result: DslQueryResult) -> serde_json::Value {
@@ -1768,30 +1711,6 @@ fn dsl_query_result_to_value(result: DslQueryResult) -> serde_json::Value {
         return serde_json::Value::Object(object);
     }
     serde_json::to_value(result).unwrap_or(serde_json::Value::Null)
-}
-
-fn string_parameter(
-    parameters: &BTreeMap<String, serde_json::Value>,
-    camel_key: &str,
-    snake_key: &str,
-) -> Option<String> {
-    parameters
-        .get(camel_key)
-        .or_else(|| parameters.get(snake_key))
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn cell_status_from_capability(status: CapabilityRunStatus) -> CellRunStatus {
-    match status {
-        CapabilityRunStatus::Passed => CellRunStatus::Passed,
-        CapabilityRunStatus::Failed => CellRunStatus::Failed,
-        CapabilityRunStatus::Error => CellRunStatus::Error,
-        CapabilityRunStatus::Inconclusive
-        | CapabilityRunStatus::Partial
-        | CapabilityRunStatus::NotApplicable => CellRunStatus::Partial,
-    }
 }
 
 #[cfg(test)]
