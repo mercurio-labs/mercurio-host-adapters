@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-python"
-version = "0.1.0"
+version = "0.1.0-beta.4"
 dependencies = [
  "mercurio-core",
  "mercurio-simulation",
@@ -377,7 +377,7 @@ dependencies = [
  "mercurio-language-contracts",
  "mercurio-simulation-core",
  "mercurio-sysml",
- "mercurio-sysml-simulation",
+ "mercurio-views",
  "serde",
  "serde_json",
 ]
@@ -399,17 +399,6 @@ dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
  "mercurio-language-frontend",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mercurio-sysml-simulation"
-version = "0.1.0"
-dependencies = [
- "mercurio-core",
- "mercurio-simulation-core",
- "mercurio-sysml",
  "serde",
  "serde_json",
 ]

@@ -1,4 +1,5 @@
 target/
+docs/_build/
 
 /.idea/
 python/*.egg-info/

@@ -80,7 +80,7 @@ except ImportError:
         except ImportError as error:  # pragma: no cover - depends on native wheel install
             raise ImportError(
                 "Mercurio native builder is not installed. Install the PyO3 wheel or run "
-                "`maturin develop -m crates/mercurio-python/Cargo.toml` in this environment."
+                "`maturin develop` from the mercurio-host-adapters repository root."
             ) from error
 
 

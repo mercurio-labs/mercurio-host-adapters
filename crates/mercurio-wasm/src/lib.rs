@@ -20,7 +20,8 @@ use mercurio_sysml::{
 };
 use mercurio_views::{
     DiagramError, DiagramRenderRequestDto, TableError, TableRenderRequestDto, list_diagram_kinds,
-    list_table_kinds, render_diagram, render_table,
+    list_table_kinds, list_view_kinds, render_diagram, render_table,
+    view_catalog as build_view_catalog,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -142,6 +143,23 @@ pub fn wasm_list_diagram_kinds() -> JsValue {
 #[wasm_bindgen(js_name = listTableKinds)]
 pub fn wasm_list_table_kinds() -> JsValue {
     json_response(|| Ok(success(serde_json::to_value(list_table_kinds())?, [])))
+}
+
+#[wasm_bindgen(js_name = listViewKinds)]
+pub fn wasm_list_view_kinds() -> JsValue {
+    json_response(|| Ok(success(serde_json::to_value(list_view_kinds())?, [])))
+}
+
+#[wasm_bindgen(js_name = viewCatalog)]
+pub fn wasm_view_catalog(document: JsValue) -> JsValue {
+    json_response(|| {
+        let document: KirDocument = from_js(document)?;
+        let graph = Graph::from_document(document)?;
+        Ok(success(
+            serde_json::to_value(build_view_catalog(&graph))?,
+            [],
+        ))
+    })
 }
 
 #[wasm_bindgen(js_name = renderDiagram)]
@@ -547,6 +565,22 @@ impl MercurioSession {
             Ok(success(
                 serde_json::to_value(document)?,
                 [("sourceCount", json!(self.sources.len()))],
+            ))
+        })
+    }
+
+    #[wasm_bindgen(js_name = listViewKinds)]
+    pub fn list_view_kinds(&self) -> JsValue {
+        json_response(|| Ok(success(serde_json::to_value(list_view_kinds())?, [])))
+    }
+
+    #[wasm_bindgen(js_name = viewCatalog)]
+    pub fn view_catalog(&self) -> JsValue {
+        json_response(|| {
+            let graph = self.graph()?;
+            Ok(success(
+                serde_json::to_value(build_view_catalog(&graph))?,
+                [],
             ))
         })
     }

@@ -1,6 +1,8 @@
 """Small public Python facade for Mercurio models."""
 
 import os as _os
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from pathlib import Path as _Path
 from typing import Any as _Any
 
@@ -18,7 +20,11 @@ __all__ = [
     "project",
 ]
 
-__version__ = "0.1.0b4"
+try:
+    __version__ = _distribution_version("mercurio-sysml")
+except _PackageNotFoundError:
+    # Source-tree imports are intentionally distinguishable from release artifacts.
+    __version__ = "0+unknown"
 
 def open(
     path: str | None = None,

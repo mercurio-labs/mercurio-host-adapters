@@ -1,0 +1,68 @@
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[project]
+name = "mercurio-sysml"
+dynamic = ["version"]
+description = "Native Python authoring, query, analysis, and capability SDK for Mercurio SysML v2 models."
+readme = "python/README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Mercurio Contributors" }
+]
+keywords = ["SysML", "KerML", "systems-engineering", "semantic-modeling"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+lab = ["matplotlib", "numpy"]
+test = ["pytest>=8,<10"]
+dev = [
+  "furo>=2024.8.6",
+  "myst-parser>=2,<5",
+  "pytest>=8,<10",
+  "sphinx>=7,<9",
+  "twine>=5,<7",
+]
+
+[project.urls]
+Documentation = "https://mercurio-labs.github.io/mercurio-host-adapters/"
+Repository = "https://github.com/mercurio-labs/mercurio-host-adapters"
+Issues = "https://github.com/mercurio-labs/mercurio-host-adapters/issues"
+
+[tool.maturin]
+manifest-path = "crates/mercurio-python/Cargo.toml"
+features = ["embed-stdlib"]
+python-source = "python"
+python-packages = ["mercurio", "mercurio_capability"]
+module-name = "mercurio._core"
+locked = true
+strip = true
+exclude = [
+  "**/__pycache__/**",
+  "**/*.pyc",
+  "**/*.pyo",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

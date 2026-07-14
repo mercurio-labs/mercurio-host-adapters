@@ -21,7 +21,7 @@ use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
     StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
     list_analysis_specs, load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
-    resolve_default_stdlib_locator, sysml_mutation_feasibility_service,
+    resolve_default_stdlib_locator, sysml_field_specs, sysml_mutation_feasibility_service,
     sysml_semantic_legality_service, sysml_semantic_next_actions_service,
 };
 use mercurio_view_model::{
@@ -1414,7 +1414,8 @@ fn compile_sysml_files_with_context(
                 .map_err(|err| PyValueError::new_err(err.to_string()))?,
         );
     }
-    KirDocument::merge(documents).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    KirDocument::merge_with_registered_fields(documents, sysml_field_specs().iter().copied())
+        .map_err(|err| PyRuntimeError::new_err(err.to_string()))
 }
 
 fn find_project_descriptor(start: &Path) -> Option<PathBuf> {
@@ -2435,11 +2436,11 @@ mod tests {
             serde_json::json!("change_set")
         );
         assert_eq!(
-            report["operations"][0]["change_set"]["actions"][0]["RenameDeclaration"]["new_name"],
+            report["operations"][0]["change_set"]["operations"][0]["RenameDeclaration"]["new_name"],
             serde_json::json!("VehicleRenamed")
         );
         assert_eq!(
-            report["operations"][0]["change_set"]["actions"][1]["SetAttribute"]["value"],
+            report["operations"][0]["change_set"]["operations"][1]["SetAttribute"]["value"],
             serde_json::json!("checked")
         );
     }
@@ -2507,15 +2508,15 @@ mod tests {
         })
         .to_string();
 
-        let Model: serde_json::Value =
+        let model: serde_json::Value =
             serde_json::from_str(&model_explorer_json(&graph, &l2_request).unwrap()).unwrap();
         let metatype: serde_json::Value = serde_json::from_str(
             &metatype_explorer_json(&graph, &registry, &metatype_request).unwrap(),
         )
         .unwrap();
 
-        assert_eq!(Model["seed_id"], serde_json::json!("type.Demo.Vehicle"));
-        assert_eq!(Model["nodes"][0]["is_seed"], serde_json::json!(true));
+        assert_eq!(model["seed_id"], serde_json::json!("type.Demo.Vehicle"));
+        assert_eq!(model["nodes"][0]["is_seed"], serde_json::json!(true));
         assert_eq!(metatype["seed_id"], serde_json::json!("type.Demo.Vehicle"));
     }
 
@@ -2573,7 +2574,14 @@ mod tests {
             row.get("qualified_name").and_then(|value| value.as_str())
                 == Some("Demo.Vehicle.engine")
                 && row.get("kind").and_then(|value| value.as_str()) == Some("SysML::PartUsage")
-                && row.get("type").and_then(|value| value.as_str()) == Some("type.Demo.Engine")
+                && row
+                    .get("type")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|types| {
+                        types
+                            .iter()
+                            .any(|value| value.as_str() == Some("type.Demo.Engine"))
+                    })
         }));
     }
 
@@ -2624,8 +2632,14 @@ mod tests {
         assert!(snapshot.iter().any(|row| {
             row.get("qualified_name").and_then(|value| value.as_str())
                 == Some("Subsetting Example.Vehicle Definition.front wheel")
-                && row.get("type").and_then(|value| value.as_str())
-                    == Some("type.Subsetting Example.Vehicle Part")
+                && row
+                    .get("type")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|types| {
+                        types.iter().any(|value| {
+                            value.as_str() == Some("type.Subsetting Example.Vehicle Part")
+                        })
+                    })
         }));
     }
 
@@ -2806,7 +2820,8 @@ mod tests {
                 .join("..")
                 .join("..")
                 .join("mercurio-examples")
-                .join("python-edit-existing");
+                .join("python")
+                .join("edit-existing");
             let workspace = PyWorkspace::open(
                 example_root
                     .join(".project.json")
@@ -2947,7 +2962,8 @@ mod tests {
                 .join("..")
                 .join("..")
                 .join("mercurio-examples")
-                .join("python-stdlib-authoring");
+                .join("python")
+                .join("stdlib-authoring");
             let workspace = PyWorkspace::open(
                 example_root
                     .join(".project.json")
@@ -3070,6 +3086,7 @@ mod tests {
                 .join("..")
                 .join("..")
                 .join("mercurio-examples")
+                .join("desktop")
                 .join("project-plugin-pacti-analysis");
             let workspace = PyWorkspace::open(
                 example_root
@@ -3124,6 +3141,7 @@ mod tests {
                 .join("..")
                 .join("..")
                 .join("mercurio-examples")
+                .join("desktop")
                 .join("structural-connectivity");
             let workspace = PyWorkspace::open(
                 example_root
@@ -3252,6 +3270,7 @@ mod tests {
                 .join("..")
                 .join("..")
                 .join("mercurio-examples")
+                .join("desktop")
                 .join("voron-trident-simulation");
             let workspace = PyWorkspace::open(
                 example_root
@@ -4131,7 +4150,7 @@ mod tests {
                 &root.join("dependency.kir.json"),
                 r#"{
   "metadata": {
-    "kir_schema_version": "0.2"
+    "kir_schema_version": "0.4"
   },
   "elements": [
     {
