@@ -77,9 +77,10 @@ Do not change this stdin/stdout ABI.
 ## Install & Test
 
 ```bash
+cd mercurio-host-adapters
 pip install -e ".[dev]"
 pytest
-pytest tests/test_client.py -v
+pytest python/tests/test_client.py -v
 ```
 
 ---

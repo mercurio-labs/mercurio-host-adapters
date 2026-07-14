@@ -16,7 +16,44 @@ on:
           - "testpypi"
           - "pypi"
 
+env:
+  FOUNDATION_REF: 743b244802b5598b95cc22dbff0f4aa4ab064405
+  SYSML_REF: d3873c9020df0270d46bcd97096511a9c04c3d7d
+  EXAMPLES_REF: 533b75ca9c33ee9902fc2407ee8a2318536c702a
+
 jobs:
+  source-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mercurio-host-adapters
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-foundation
+          ref: ${{ env.FOUNDATION_REF }}
+          path: mercurio-foundation
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-sysml
+          ref: ${{ env.SYSML_REF }}
+          path: mercurio-sysml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test native Rust bindings
+        working-directory: mercurio-host-adapters
+        run: cargo test -p mercurio-python --features embed-stdlib --locked
+      - name: Install Python test environment
+        working-directory: mercurio-host-adapters
+        run: python -m pip install -e ".[test]"
+      - name: Test Python facade
+        working-directory: mercurio-host-adapters
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest python/tests -q
+
   wheels:
     strategy:
       fail-fast: false
@@ -34,27 +71,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mercurio-labs/mercurio-foundation
+          ref: ${{ env.FOUNDATION_REF }}
           path: mercurio-foundation
       - uses: actions/checkout@v4
         with:
           repository: mercurio-labs/mercurio-sysml
+          ref: ${{ env.SYSML_REF }}
           path: mercurio-sysml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          working-directory: mercurio-host-adapters/crates/mercurio-python
+          working-directory: mercurio-host-adapters
           args: >-
             --release
             --out dist
-            --features embed-stdlib
-            --interpreter 3.10 3.11 3.12 3.13
+      - name: Smoke install native wheel
+        if: matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        working-directory: mercurio-host-adapters
+        run: |
+          python -m pip install --no-deps --target wheel-smoke dist/*.whl
+          PYTHONPATH="$PWD/wheel-smoke" python -c "import mercurio, mercurio._core, mercurio.capability, mercurio_capability; print(mercurio.__version__)"
       - uses: actions/upload-artifact@v4
         with:
           name: python-wheels-${{ matrix.target }}
-          path: mercurio-host-adapters/crates/mercurio-python/dist/*.whl
+          path: mercurio-host-adapters/dist/*.whl
 
   github-release:
-    needs: [wheels, smoke-python-examples]
+    needs: [source-tests, wheels, python-versions, smoke-python-examples]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -78,6 +125,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mercurio-labs/mercurio-examples
+          ref: ${{ env.EXAMPLES_REF }}
           path: mercurio-examples
       - uses: actions/setup-python@v5
         with:
@@ -92,19 +140,39 @@ jobs:
           . .venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip install dist/*.whl
-          python -c "import mercurio; print(mercurio.__version__)"
+          python -c "import mercurio, mercurio._core, mercurio.capability, mercurio_capability; print(mercurio.__version__)"
       - name: Run pure Python examples
-        working-directory: mercurio-examples/python
+        working-directory: mercurio-examples/python/facade-tour
         run: |
-          . ../../.venv/bin/activate
+          . ../../../.venv/bin/activate
           for example in 0*.py; do
             echo "::group::$example"
             python "$example"
             echo "::endgroup::"
           done
 
-  publish-testpypi:
+  python-versions:
     needs: wheels
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheels-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Install and import abi3 wheel
+        run: |
+          python -m pip install dist/*.whl
+          python -c "import mercurio, mercurio._core, mercurio.capability, mercurio_capability; print(mercurio.__version__)"
+
+  publish-testpypi:
+    needs: [source-tests, wheels, python-versions, smoke-python-examples]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'testpypi'
     environment: testpypi
@@ -122,7 +190,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   publish-pypi:
-    needs: wheels
+    needs: [source-tests, wheels, python-versions, smoke-python-examples]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'pypi'
     environment: pypi
