@@ -231,7 +231,6 @@ version = "0.1.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
- "mercurio-model",
  "mercurio-workspace",
  "serde",
  "serde_json",
