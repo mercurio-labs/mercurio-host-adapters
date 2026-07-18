@@ -7,6 +7,8 @@ use mercurio_core::{
     load_default_rulepacks, run_graph_assessment, run_runtime_assessment,
 };
 use mercurio_kerml::{compile_kerml_text, parse_kerml};
+use mercurio_lsp::LanguageServer;
+use mercurio_lsp_host::create_language_server;
 use mercurio_simulation::{
     ConcurrentSimulationScenario, ConcurrentSubjectScenario, SimulationStatus,
     StateMachineScenarioEvent, list_analysis_cases, run_analysis_case, run_concurrent_simulation,
@@ -36,6 +38,28 @@ pub fn start() {
     console_error_panic_hook::set_once();
 }
 
+#[wasm_bindgen]
+pub struct MercurioLanguageServer {
+    inner: LanguageServer,
+}
+
+#[wasm_bindgen]
+impl MercurioLanguageServer {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<MercurioLanguageServer, JsValue> {
+        create_language_server()
+            .map(|inner| Self { inner })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = handle)]
+    pub fn handle(&mut self, message: JsValue) -> Result<JsValue, JsValue> {
+        let message: Value = serde_wasm_bindgen::from_value(message)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        serde_wasm_bindgen::to_value(&self.inner.handle(message))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+}
 #[wasm_bindgen(js_name = version)]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

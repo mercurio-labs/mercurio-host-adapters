@@ -1,13 +1,12 @@
-# Mercurio language workbench VS Code dev harness
+# Mercurio Language Workbench for VS Code
 
-This unpublished extension is a smoke client for the standard-IO LSP host.
+The extension discovers an installed Mercurio language server, verifies that
+its version matches the extension, and provides SysML v2 and KerML diagnostics,
+completion, navigation, rename, code actions, semantic tokens, and formatting.
 
-1. Build `mercurio-lsp-host` from the host-adapters workspace.
-2. Run `npm install` in this directory.
-3. Open this directory in VS Code and press F5.
-4. Set `mercurio.lsp.serverPath` when the binary is not on PATH.
-5. Open a SysML or KerML fixture and verify diagnostics, outline, definition,
-   references, and hover.
+Set mercurio.lsp.serverPath only when the server is not installed with
+Mercurio and is not on PATH. Standard-library definitions are exposed through
+a read-only virtual document provider.
 
-Packaging, syntax grammar generation, discovery, and marketplace publication
-belong to gated LW-9 and are intentionally absent.
+Run npm run generate:grammar to regenerate the TextMate grammar from the
+action-space keyword registry. Run npm run package to create the VSIX.

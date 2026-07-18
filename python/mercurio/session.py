@@ -217,6 +217,12 @@ class SemanticRef:
     def attrs(self) -> JsonObject:
         return dict(self.data)
 
+    def facade(self):
+        """Return the generated metamodel facade for this semantic reference."""
+        from ._generated import facade
+
+        return facade(self)
+
     def owner(self) -> str | None:
         value = self.data.get("owner")
         return None if value is None else str(value)
@@ -283,6 +289,16 @@ class SemanticQuery:
 
     def refs(self) -> list[SemanticRef]:
         return list(self._refs)
+
+    def facade(self, value: Any):
+        """Resolve a semantic element and return its generated typed facade."""
+        ref = value if isinstance(value, SemanticRef) else self.resolve(value)
+        if ref._model is not self:
+            raise ValueError("semantic reference belongs to a different compiled model")
+        return ref.facade()
+
+    def facades(self) -> list[Any]:
+        return [ref.facade() for ref in self._refs]
 
     def count(self) -> int:
         return len(self._refs)
@@ -569,6 +585,16 @@ class CompiledModel:
 
     def refs(self) -> list[SemanticRef]:
         return list(self._refs)
+
+    def facade(self, value: Any):
+        """Resolve a semantic element and return its generated typed facade."""
+        ref = value if isinstance(value, SemanticRef) else self.resolve(value)
+        if ref._model is not self:
+            raise ValueError("semantic reference belongs to a different compiled model")
+        return ref.facade()
+
+    def facades(self) -> list[Any]:
+        return [ref.facade() for ref in self._refs]
 
     def diff(self, other: Any) -> list["SemanticSnapshotDifference"]:
         from .semantic import compare_semantic_snapshots

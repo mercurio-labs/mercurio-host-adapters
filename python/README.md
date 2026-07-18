@@ -135,11 +135,12 @@ project.add(decl)
 
 snapshot = project.compile()
 engine = snapshot.resolve(decl)
+engine_facade = engine.facade()
+assert engine_facade.raw is engine
 ```
 
 `project` is mutable and source-backed. `snapshot` is an immutable compiled
-snapshot with a stable revision hash. `engine` is an immutable semantic ref into
-that one snapshot.
+snapshot with a stable revision hash. `engine` is an immutable semantic ref into that one snapshot. `engine.facade()` selects a generated, metamodel-derived read facade without creating a second model object hierarchy.
 
 Small edits are routed through the project session, even when the target came
 from a semantic ref:

@@ -18,8 +18,9 @@ test = []
 lab = ["matplotlib", "numpy"]
 
 [tool.setuptools]
-packages = ["mercurio", "mercurio.extensions", "mercurio_capability"]
+packages = ["mercurio", "mercurio._generated", "mercurio.extensions", "mercurio_capability"]
 
 [tool.setuptools.package-data]
 mercurio = ["*.pyi", "py.typed"]
+"mercurio._generated" = ["py.typed"]
 mercurio_capability = ["*.pyi", "py.typed"]
