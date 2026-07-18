@@ -3,6 +3,8 @@ members = [
     "crates/mercurio-view-model",
     "crates/mercurio-python",
     "crates/mercurio-wasm",
+    "crates/mercurio-lsp",
+    "crates/mercurio-lsp-host",
 ]
 resolver = "2"
 

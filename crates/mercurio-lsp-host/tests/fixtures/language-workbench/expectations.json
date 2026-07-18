@@ -1,0 +1,194 @@
+{
+  "documents": [
+    {
+      "diagnostics": [],
+      "references": [
+        {
+          "owner_element_id": "pkg.Demo",
+          "property": "members",
+          "source_name": "types.sysml",
+          "span": {
+            "end_byte": 37,
+            "start_byte": 0
+          },
+          "target_element_id": "type.Demo.Vehicle",
+          "target_source_name": "types.sysml"
+        },
+        {
+          "owner_element_id": "type.Demo.Vehicle",
+          "property": "specializes",
+          "source_name": "types.sysml",
+          "span": {
+            "end_byte": 35,
+            "start_byte": 19
+          },
+          "target_element_id": "Parts::Part",
+          "target_source_name": "mercurio-stdlib://library"
+        },
+        {
+          "owner_element_id": "type.Demo.Vehicle",
+          "property": "owner",
+          "source_name": "types.sysml",
+          "span": {
+            "end_byte": 35,
+            "start_byte": 19
+          },
+          "target_element_id": "pkg.Demo",
+          "target_source_name": "types.sysml"
+        }
+      ],
+      "revision": 1,
+      "sourceName": "types.sysml",
+      "symbols": [
+        {
+          "concept": "KerML::Kernel::Package",
+          "element_id": "pkg.Demo",
+          "qualified_name": "Demo",
+          "source_name": "types.sysml",
+          "span": {
+            "end_byte": 37,
+            "start_byte": 0
+          }
+        },
+        {
+          "concept": "SysML::Systems::PartDefinition",
+          "element_id": "type.Demo.Vehicle",
+          "qualified_name": "Demo.Vehicle",
+          "source_name": "types.sysml",
+          "span": {
+            "end_byte": 35,
+            "start_byte": 19
+          }
+        }
+      ]
+    },
+    {
+      "diagnostics": [],
+      "references": [
+        {
+          "owner_element_id": "pkg.Use",
+          "property": "members",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 58,
+            "start_byte": 0
+          },
+          "target_element_id": "feature.Use.car",
+          "target_source_name": "use.sysml"
+        },
+        {
+          "owner_element_id": "import.pkg.Use.1",
+          "property": "owner",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 32,
+            "start_byte": 18
+          },
+          "target_element_id": "pkg.Use",
+          "target_source_name": "use.sysml"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "specializes",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "Parts::parts",
+          "target_source_name": "mercurio-stdlib://library"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "subsetted_features",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "Parts::parts",
+          "target_source_name": "mercurio-stdlib://library"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "owner",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "pkg.Use",
+          "target_source_name": "use.sysml"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "definition",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "type.Demo.Vehicle",
+          "target_source_name": "types.sysml"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "specializes",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "type.Demo.Vehicle",
+          "target_source_name": "types.sysml"
+        },
+        {
+          "owner_element_id": "feature.Use.car",
+          "property": "type",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          },
+          "target_element_id": "type.Demo.Vehicle",
+          "target_source_name": "types.sysml"
+        }
+      ],
+      "revision": 1,
+      "sourceName": "use.sysml",
+      "symbols": [
+        {
+          "concept": "KerML::Kernel::Package",
+          "element_id": "pkg.Use",
+          "qualified_name": "Use",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 58,
+            "start_byte": 0
+          }
+        },
+        {
+          "concept": "SysML::Systems::PartUsage",
+          "element_id": "feature.Use.car",
+          "qualified_name": "Use.car",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 56,
+            "start_byte": 38
+          }
+        },
+        {
+          "concept": "SysML::Import",
+          "element_id": "import.pkg.Use.1",
+          "qualified_name": "pkg.Use.1",
+          "source_name": "use.sysml",
+          "span": {
+            "end_byte": 32,
+            "start_byte": 18
+          }
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 1
+}

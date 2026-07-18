@@ -1,0 +1,14 @@
+[package]
+name = "mercurio-lsp-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
+mercurio-language-contracts = { path = "../../../mercurio-foundation/crates/mercurio-language-contracts" }
+mercurio-lsp = { path = "../mercurio-lsp" }
+mercurio-semantic-services = { path = "../../../mercurio-foundation/crates/mercurio-semantic-services" }
+mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
+serde_json.workspace = true
+

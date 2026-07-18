@@ -1,0 +1,26 @@
+{
+  "name": "mercurio-language-workbench-dev",
+  "displayName": "Mercurio Language Workbench (Dev)",
+  "version": "0.0.1",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:sysml", "onLanguage:kerml"],
+  "contributes": {
+    "languages": [
+      { "id": "sysml", "extensions": [".sysml"], "aliases": ["SysML v2"] },
+      { "id": "kerml", "extensions": [".kerml"], "aliases": ["KerML"] }
+    ],
+    "configuration": {
+      "title": "Mercurio Language Workbench",
+      "properties": {
+        "mercurio.lsp.serverPath": {
+          "type": "string",
+          "default": "mercurio-lsp-host",
+          "description": "Path to the locally built Mercurio LSP host binary."
+        }
+      }
+    }
+  },
+  "dependencies": { "vscode-languageclient": "^9.0.1" }
+}

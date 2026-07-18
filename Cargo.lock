@@ -294,6 +294,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mercurio-lsp"
+version = "0.1.0"
+dependencies = [
+ "mercurio-kir",
+ "mercurio-language-contracts",
+ "mercurio-model",
+ "mercurio-semantic-services",
+ "mercurio-workspace",
+ "serde_json",
+]
+
+[[package]]
+name = "mercurio-lsp-host"
+version = "0.1.0"
+dependencies = [
+ "mercurio-kerml",
+ "mercurio-language-contracts",
+ "mercurio-lsp",
+ "mercurio-semantic-services",
+ "mercurio-sysml",
+ "serde_json",
+]
+
+[[package]]
 name = "mercurio-model"
 version = "0.1.0"
 dependencies = [
