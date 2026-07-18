@@ -1,8 +1,12 @@
 [package]
 name = "mercurio-python"
-version.workspace = true
+version = "0.1.0-beta.4"
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "PyO3 native bindings for the Mercurio SysML Python SDK."
+repository = "https://github.com/mercurio-labs/mercurio-host-adapters"
 
 [lib]
 name = "_core"
@@ -12,11 +16,11 @@ crate-type = ["cdylib", "rlib"]
 embed-stdlib = ["mercurio-sysml/embed-stdlib"]
 
 [dependencies]
-mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core" }
-mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation" }
-mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
-mercurio-view-model = { path = "../mercurio-view-model" }
-mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }
+mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core", version = "0.1.0" }
+mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation", version = "0.1.0" }
+mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml", version = "0.1.0" }
+mercurio-view-model = { path = "../mercurio-view-model", version = "0.1.0" }
+mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views", version = "0.1.0" }
 pyo3 = { workspace = true, features = ["abi3-py310", "extension-module"] }
 serde.workspace = true
 serde_json.workspace = true

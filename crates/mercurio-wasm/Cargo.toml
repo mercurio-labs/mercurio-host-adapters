@@ -3,19 +3,21 @@ name = "mercurio-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 console_error_panic_hook.workspace = true
-mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core", default-features = false }
-mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
+mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core", version = "0.1.0", default-features = false }
+mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml", version = "0.1.0" }
 mercurio-lsp = { path = "../mercurio-lsp" }
 mercurio-lsp-host = { path = "../mercurio-lsp-host" }
-mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation" }
-mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
-mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }
+mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation", version = "0.1.0" }
+mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml", version = "0.1.0" }
+mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views", version = "0.1.0" }
 serde = { workspace = true }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true

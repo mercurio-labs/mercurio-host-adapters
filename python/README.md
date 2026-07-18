@@ -2,7 +2,8 @@
 
 This package is a typed Python client for Mercurio models.
 
-For a full API reference, see [`API.md`](API.md).
+For a full API reference, see the
+[published API documentation](https://mercurio-labs.github.io/mercurio-host-adapters/api.html).
 
 Most scripts should use the small facade:
 
@@ -79,7 +80,7 @@ with mercurio.open("C:/models/demo") as model:
 ```
 
 For a fuller end-to-end example, see
-[`examples/analysis_execution_showcase.py`](examples/analysis_execution_showcase.py).
+[`analysis_execution_showcase.py`](https://github.com/mercurio-labs/mercurio-host-adapters/blob/main/python/examples/analysis_execution_showcase.py).
 It inspects the analysis spec, runs the case, prints simulation channels,
 state-machine state timelines, constraint and activity summaries, rate and
 lookup-table channels, evidence, diagnostics, and optional harness checks:
