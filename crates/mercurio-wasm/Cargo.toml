@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 console_error_panic_hook.workspace = true
 mercurio-core = { path = "../../../mercurio-foundation/crates/mercurio-core", default-features = false }
 mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
+mercurio-lsp = { path = "../mercurio-lsp" }
+mercurio-lsp-host = { path = "../mercurio-lsp-host" }
 mercurio-simulation = { path = "../../../mercurio-sysml/crates/mercurio-simulation" }
 mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 mercurio-views = { path = "../../../mercurio-foundation/crates/mercurio-views" }

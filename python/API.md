@@ -211,12 +211,15 @@ configuration.
 | `metatype_chain: list[str]` | Direct and inherited metatype names. |
 | `attr(name, default=None)`, `get(name, default=None)` | Read row attributes. |
 | `attrs() -> JsonObject` | Copy of row attributes. |
+| `facade() -> ElementFacade` | Generated, kind-safe metamodel facade over this same immutable ref. |
 | `owner() -> str | None` | Owning qualified name or id. |
 | `type_name() -> str | None` | First type/typed-by value. |
 | `specializes() -> list[str]` | Specialization targets. |
 | `is_metatype(expected, *, include_subtypes=True) -> bool` | Metatype match helper. |
 | `children() -> list[SemanticRef]` | Direct contained children. |
 | `walk() -> Iterable[SemanticRef]` | Depth-first containment traversal from this ref. |
+
+Generated facade classes live in the private `mercurio._generated` package and are derived from the pinned reified metamodel. `ElementView`, `metamodel.py`, and `wrap()` remain compatibility aliases for previously generated wrapper packages; application code should enter through `SemanticRef.facade()` or `CompiledModel.facade()`.
 
 Specialized refs:
 
@@ -272,6 +275,8 @@ variant.
 | `rows` | Frozen semantic snapshot rows. |
 | `semantic_snapshot_json() -> str` | Raw snapshot JSON. |
 | `refs() -> list[SemanticRef]` | All semantic refs. |
+| `facade(value) -> ElementFacade` | Resolve a name/ref and return its generated metamodel facade. |
+| `facades() -> list[ElementFacade]` | Generated facades for every semantic ref. |
 | `diff(other) -> list[SemanticSnapshotDifference]` | Compare this snapshot with another snapshot/model. |
 | `to_records(refs=None) -> list[JsonObject]` | Export selected refs to records. |
 | `to_frame(refs=None) -> pandas.DataFrame` | Export to pandas; raises if pandas is not installed. |

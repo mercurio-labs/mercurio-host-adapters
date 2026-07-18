@@ -1,14 +1,12 @@
-use mercurio_kerml::KermlLanguageModule;
-use mercurio_language_contracts::LanguageRegistry;
-use mercurio_lsp::{LanguageServer, serve_stdio};
-use mercurio_sysml::{SysmlLanguageModule, load_sysml_baseline};
+use mercurio_lsp::serve_stdio;
+use mercurio_lsp_host::create_language_server;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut registry = LanguageRegistry::new();
-    registry.register(KermlLanguageModule);
-    registry.register(SysmlLanguageModule);
-    let library = load_sysml_baseline()?;
-    serve_stdio(LanguageServer::new(registry, library))?;
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    serve_stdio(create_language_server()?)?;
     Ok(())
 }
 
@@ -22,11 +20,7 @@ mod tests {
 
     #[test]
     fn lsp_harness_covers_incremental_sync_outline_and_navigation() {
-        let mut registry = LanguageRegistry::new();
-        registry.register(KermlLanguageModule);
-        registry.register(SysmlLanguageModule);
-        let library = load_sysml_baseline().unwrap();
-        let mut server = LanguageServer::new(registry, library);
+        let mut server = create_language_server().unwrap();
 
         let first = "file:///workspace/types.sysml";
         let second = "file:///workspace/use.sysml";
@@ -86,6 +80,81 @@ mod tests {
                 .is_some_and(|value| value.contains("Effective values"))
         );
 
+        let symbol_completion = server.handle(json!({
+            "jsonrpc":"2.0","id":5,"method":"textDocument/completion",
+            "params":{"textDocument":{"uri":second},"position":{"line":0,"character":41}}
+        }));
+        assert!(
+            symbol_completion[0]["result"]
+                .as_array()
+                .is_some_and(|items| { items.iter().any(|item| item["label"] == "Vehicle") })
+        );
+        let keyword_completion = server.handle(json!({
+            "jsonrpc":"2.0","id":6,"method":"textDocument/completion",
+            "params":{"textDocument":{"uri":second},"position":{"line":0,"character":13}}
+        }));
+        assert!(
+            keyword_completion[0]["result"]
+                .as_array()
+                .is_some_and(|items| {
+                    items.iter().any(|item| item["label"] == "part")
+                        && !items.iter().any(|item| item["label"] == "block")
+                })
+        );
+        let prepared = server.handle(json!({
+            "jsonrpc":"2.0","id":7,"method":"textDocument/prepareRename",
+            "params":{"textDocument":{"uri":second},"position":{"line":0,"character":41}}
+        }));
+        assert_eq!(
+            prepared[0]
+                .pointer("/result/placeholder")
+                .and_then(Value::as_str),
+            Some("Vehicle")
+        );
+
+        let rename = server.handle(json!({
+            "jsonrpc":"2.0","id":8,"method":"textDocument/rename",
+            "params":{"textDocument":{"uri":second},"position":{"line":0,"character":41},"newName":"Conveyance"}
+        }));
+        assert!(
+            rename[0]
+                .pointer("/result/changes")
+                .and_then(Value::as_object)
+                .is_some_and(|changes| changes.contains_key(first) && changes.contains_key(second))
+        );
+
+        let semantic_tokens = server.handle(json!({
+            "jsonrpc":"2.0","id":9,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":second}}
+        }));
+        assert!(
+            semantic_tokens[0]
+                .pointer("/result/data")
+                .and_then(Value::as_array)
+                .is_some_and(|data| !data.is_empty())
+        );
+
+        let formatting = server.handle(json!({
+            "jsonrpc":"2.0","id":10,"method":"textDocument/formatting",
+            "params":{"textDocument":{"uri":second},"options":{"tabSize":2,"insertSpaces":true}}
+        }));
+        assert!(
+            formatting[0]["result"]
+                .as_array()
+                .is_some_and(|edits| !edits.is_empty())
+        );
+
+        let code_actions = server.handle(json!({
+            "jsonrpc":"2.0","id":11,"method":"textDocument/codeAction",
+            "params":{"textDocument":{"uri":second},"range":{
+                "start":{"line":0,"character":0},"end":{"line":0,"character":48}
+            },"context":{"diagnostics":[]}}
+        }));
+        assert!(
+            code_actions[0]["result"]
+                .as_array()
+                .is_some_and(|actions| !actions.is_empty())
+        );
         let refreshed = server.handle(json!({
             "jsonrpc":"2.0","method":"textDocument/didChange","params":{
                 "textDocument":{"uri":second,"version":2},

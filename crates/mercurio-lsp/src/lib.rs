@@ -12,6 +12,12 @@ use mercurio_semantic_services::mutation::ModelChangeEvent;
 use mercurio_workspace::WorkspaceSymbolIndex;
 use serde_json::{Value, json};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionKeyword {
+    pub label: String,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 struct OpenDocument {
     revision: u64,
@@ -24,11 +30,22 @@ pub struct LanguageServer {
     documents: BTreeMap<String, OpenDocument>,
     analyses: BTreeMap<String, LanguageAnalysis>,
     index: WorkspaceSymbolIndex,
+    completion_keywords: Vec<CompletionKeyword>,
     shutdown: bool,
 }
 
 impl LanguageServer {
     pub fn new(registry: LanguageRegistry, library: KirDocument) -> Self {
+        Self::with_completion_keywords(registry, library, Vec::new())
+    }
+
+    pub fn with_completion_keywords(
+        registry: LanguageRegistry,
+        library: KirDocument,
+        mut completion_keywords: Vec<CompletionKeyword>,
+    ) -> Self {
+        completion_keywords.sort_by(|left, right| left.label.cmp(&right.label));
+        completion_keywords.dedup_by(|left, right| left.label == right.label);
         let mut index = WorkspaceSymbolIndex::new();
         index.update(document_symbols(
             "",
@@ -42,6 +59,7 @@ impl LanguageServer {
             documents: BTreeMap::new(),
             analyses: BTreeMap::new(),
             index,
+            completion_keywords,
             shutdown: false,
         }
     }
@@ -59,7 +77,12 @@ impl LanguageServer {
                 json!({"capabilities":{
                 "textDocumentSync":{"openClose":true,"change":2},
                 "documentSymbolProvider":true,"workspaceSymbolProvider":true,
-                "definitionProvider":true,"referencesProvider":true,"hoverProvider":true
+                "definitionProvider":true,"referencesProvider":true,"hoverProvider":true,
+                "completionProvider":{"triggerCharacters":[" ",":",".","@"]},
+                "renameProvider":{"prepareProvider":true},
+                "codeActionProvider":true,
+                "semanticTokensProvider":{"legend":{"tokenTypes":["keyword","type","variable","property","namespace"],"tokenModifiers":["declaration","readonly"]},"full":true},
+                "documentFormattingProvider":true
             },"serverInfo":{"name":"mercurio-lsp","version":env!("CARGO_PKG_VERSION")}}),
             )],
             "initialized" | "exit" => Vec::new(),
@@ -75,6 +98,12 @@ impl LanguageServer {
             "textDocument/definition" => vec![response(id, self.definition(&params))],
             "textDocument/references" => vec![response(id, self.references(&params))],
             "textDocument/hover" => vec![response(id, self.hover(&params))],
+            "textDocument/completion" => vec![response(id, self.completion(&params))],
+            "textDocument/prepareRename" => vec![response(id, self.prepare_rename(&params))],
+            "textDocument/rename" => vec![response(id, self.rename(&params))],
+            "textDocument/codeAction" => vec![response(id, self.code_actions(&params))],
+            "textDocument/semanticTokens/full" => vec![response(id, self.semantic_tokens(&params))],
+            "textDocument/formatting" => vec![response(id, self.formatting(&params))],
             "mercurio/virtualDocument" => vec![response(id, self.virtual_document(&params))],
             _ if id.is_some() => vec![
                 json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"method not found"}}),
@@ -277,6 +306,211 @@ impl LanguageServer {
         Value::Array(result)
     }
 
+    fn completion(&self, params: &Value) -> Value {
+        let Some((uri, offset)) = self.position(params) else {
+            return json!([]);
+        };
+        let prefix = word_at(self.text(uri), offset);
+        let mut items = BTreeMap::<String, Value>::new();
+        if let Some(analysis) = self.analyses.get(uri) {
+            for symbol in analysis.visible_symbols(uri, offset) {
+                let label = symbol
+                    .qualified_name
+                    .rsplit(['.', ':'])
+                    .find(|part| !part.is_empty())
+                    .unwrap_or(symbol.qualified_name.as_str());
+                if !prefix.is_empty() && !label.starts_with(prefix) {
+                    continue;
+                }
+                items.entry(label.to_string()).or_insert_with(|| {
+                    json!({
+                        "label":label,
+                        "kind":7,
+                        "detail":symbol.concept.as_str(),
+                        "documentation":symbol.qualified_name,
+                        "insertText":label
+                    })
+                });
+            }
+        }
+        for keyword in &self.completion_keywords {
+            if !prefix.is_empty() && !keyword.label.starts_with(prefix) {
+                continue;
+            }
+            items.entry(keyword.label.clone()).or_insert_with(|| {
+                json!({
+                    "label":keyword.label,
+                    "kind":14,
+                    "detail":keyword.detail,
+                    "insertText":keyword.label
+                })
+            });
+        }
+        Value::Array(items.into_values().collect())
+    }
+    fn prepare_rename(&self, params: &Value) -> Value {
+        let Some((uri, offset)) = self.position(params) else {
+            return Value::Null;
+        };
+        let word = word_at(self.text(uri), offset);
+        if word.is_empty() || self.target_at(uri, offset).is_none() {
+            return Value::Null;
+        }
+        let range = word_range_at(self.text(uri), offset);
+        json!({"range":byte_range(self.text(uri), range),"placeholder":word})
+    }
+
+    fn rename(&self, params: &Value) -> Value {
+        let Some((uri, offset)) = self.position(params) else {
+            return Value::Null;
+        };
+        let new_name = params
+            .get("newName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !is_identifier(new_name) {
+            return Value::Null;
+        }
+        let Some(target) = self.target_at(uri, offset) else {
+            return Value::Null;
+        };
+        let Some(symbol) = self.index.symbol_by_element_id(&target) else {
+            return Value::Null;
+        };
+        let old_name = symbol
+            .qualified_name
+            .rsplit(['.', ':'])
+            .find(|part| !part.is_empty())
+            .unwrap_or(symbol.qualified_name.as_str());
+        let mut changes = BTreeMap::<String, Vec<Value>>::new();
+        if !symbol.source_name.is_empty() {
+            let declaration_text = self.text(&symbol.source_name);
+            if let Some(declaration_range) =
+                identifier_range_in_span(declaration_text, symbol.span, old_name)
+            {
+                changes
+                    .entry(symbol.source_name.clone())
+                    .or_default()
+                    .push(json!({"range":byte_range(declaration_text,declaration_range),"newText":new_name}));
+            }
+        }
+        for (source, analysis) in &self.analyses {
+            for reference in analysis.references(source) {
+                if reference.target_element_id == target {
+                    changes.entry(source.clone()).or_default().push(json!({
+                        "range":byte_range(self.text(source),reference.span),
+                        "newText":new_name
+                    }));
+                }
+            }
+        }
+        json!({"changes":changes})
+    }
+
+    fn code_actions(&self, params: &Value) -> Value {
+        let Some(uri) = document_uri(params) else {
+            return json!([]);
+        };
+        let text = self.text(uri);
+        let formatted = format_document_text(text, 4, true);
+        if formatted == text {
+            return json!([]);
+        }
+        json!([{
+            "title":"Format document",
+            "kind":"source.fixAll.mercurio",
+            "isPreferred":true,
+            "edit":{"changes":{uri:[{"range":full_document_range(text),"newText":formatted}]}}
+        }])
+    }
+
+    fn semantic_tokens(&self, params: &Value) -> Value {
+        let Some(uri) = document_uri(params) else {
+            return json!({"data":[]});
+        };
+        let text = self.text(uri);
+        let keywords = self
+            .completion_keywords
+            .iter()
+            .map(|keyword| keyword.label.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut raw = Vec::<(u32, u32, u32, u32, u32)>::new();
+        for (range, word) in identifier_ranges(text) {
+            let position = byte_position(text, range.start_byte);
+            let line = position
+                .get("line")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as u32;
+            let start = position
+                .get("character")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as u32;
+            let length = word.encode_utf16().count() as u32;
+            let token_type = if keywords.contains(word) {
+                0
+            } else if word.chars().next().is_some_and(char::is_uppercase) {
+                1
+            } else {
+                2
+            };
+            raw.push((line, start, length, token_type, 0));
+        }
+        let mut data = Vec::<u32>::new();
+        let mut previous_line = 0;
+        let mut previous_start = 0;
+        for (line, start, length, token_type, modifiers) in raw {
+            let delta_line = line - previous_line;
+            let delta_start = if delta_line == 0 {
+                start - previous_start
+            } else {
+                start
+            };
+            data.extend([delta_line, delta_start, length, token_type, modifiers]);
+            previous_line = line;
+            previous_start = start;
+        }
+        json!({"data":data})
+    }
+
+    fn formatting(&self, params: &Value) -> Value {
+        let Some(uri) = document_uri(params) else {
+            return json!([]);
+        };
+        let text = self.text(uri);
+        let tab_size = params
+            .get("options")
+            .and_then(|options| options.get("tabSize"))
+            .and_then(Value::as_u64)
+            .unwrap_or(4) as usize;
+        let insert_spaces = params
+            .get("options")
+            .and_then(|options| options.get("insertSpaces"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let formatted = format_document_text(text, tab_size, insert_spaces);
+        if formatted == text {
+            json!([])
+        } else {
+            json!([{"range":full_document_range(text),"newText":formatted}])
+        }
+    }
+
+    fn target_at(&self, uri: &str, offset: usize) -> Option<String> {
+        let analysis = self.analyses.get(uri)?;
+        let declared_target = analysis.element_at(uri, offset).and_then(|element| {
+            let symbol = self.index.symbol_by_element_id(&element.element_id)?;
+            let declared_name = symbol
+                .qualified_name
+                .rsplit(['.', ':'])
+                .find(|part| !part.is_empty())?;
+            (word_at(self.text(uri), offset) == declared_name).then(|| element.element_id.clone())
+        });
+        declared_target.or_else(|| {
+            analysis
+                .resolve_reference(uri, offset)
+                .map(|reference| reference.target_element_id)
+        })
+    }
     fn hover(&self, params: &Value) -> Value {
         let Some((uri, offset)) = self.position(params) else {
             return Value::Null;
@@ -350,6 +584,9 @@ impl LanguageServer {
             .get("elementId")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        if id.is_empty() {
+            return json!({"readOnly":true,"text":serde_json::to_string_pretty(&self.library).unwrap_or_default()});
+        }
         self.library.elements.iter().find(|element| element.id == id)
             .map(|element| json!({"readOnly":true,"text":serde_json::to_string_pretty(element).unwrap_or_default()}))
             .unwrap_or(Value::Null)
@@ -456,6 +693,90 @@ fn word_at(text: &str, offset: usize) -> &str {
         .map(|index| offset + index)
         .unwrap_or(text.len());
     &text[start..end]
+}
+fn is_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|character| character == '_' || character.is_alphabetic())
+        && chars.all(|character| character == '_' || character.is_alphanumeric())
+}
+fn word_range_at(text: &str, offset: usize) -> TextRange {
+    let offset = offset.min(text.len());
+    let start = text[..offset]
+        .rfind(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .map(|index| index + 1)
+        .unwrap_or_default();
+    let end = text[offset..]
+        .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .map(|index| offset + index)
+        .unwrap_or(text.len());
+    TextRange::new(start, end)
+}
+fn identifier_range_in_span(text: &str, span: TextRange, identifier: &str) -> Option<TextRange> {
+    let start = span.start_byte.min(text.len());
+    let end = span.end_byte.min(text.len());
+    let slice = text.get(start..end)?;
+    identifier_ranges(slice)
+        .find(|(_, word)| *word == identifier)
+        .map(|(range, _)| TextRange::new(start + range.start_byte, start + range.end_byte))
+}
+fn identifier_ranges(text: &str) -> impl Iterator<Item = (TextRange, &str)> {
+    let mut ranges = Vec::new();
+    let mut start = None;
+    for (offset, character) in text.char_indices() {
+        let identifier = character == '_' || character.is_alphanumeric();
+        match (start, identifier) {
+            (None, true) => start = Some(offset),
+            (Some(begin), false) => {
+                ranges.push((TextRange::new(begin, offset), &text[begin..offset]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(begin) = start {
+        ranges.push((TextRange::new(begin, text.len()), &text[begin..]));
+    }
+    ranges.into_iter()
+}
+fn format_document_text(text: &str, tab_size: usize, insert_spaces: bool) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let unit = if insert_spaces {
+        " ".repeat(tab_size.max(1))
+    } else {
+        "\t".to_string()
+    };
+    let mut depth = 0usize;
+    let mut output = String::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            if !output.ends_with("\n\n") {
+                output.push('\n');
+            }
+            continue;
+        }
+        let leading_closes = line
+            .chars()
+            .take_while(|character| *character == '}')
+            .count();
+        depth = depth.saturating_sub(leading_closes);
+        output.push_str(&unit.repeat(depth));
+        output.push_str(line);
+        output.push('\n');
+        let opens = line.chars().filter(|character| *character == '{').count();
+        let closes = line.chars().filter(|character| *character == '}').count();
+        depth = depth
+            .saturating_add(opens)
+            .saturating_sub(closes.saturating_sub(leading_closes));
+    }
+    output
+}
+fn full_document_range(text: &str) -> Value {
+    json!({"start":{"line":0,"character":0},"end":byte_position(text,text.len())})
 }
 fn position_to_byte(text: &str, position: &Value) -> Option<usize> {
     let line = position.get("line")?.as_u64()? as usize;

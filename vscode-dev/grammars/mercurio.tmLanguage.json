@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Mercurio Systems Modeling",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "match": "\\b(?:accept|action|actor|allocate|allocation|analysis|assert|assoc|assume|attribute|behavior|bind|calc|cause|class|classifier|comment|concern|connect|connection|constraint|datatype|dependency|end|enum|event-occurrence|exhibit|failure|feature|filter|flow|focus|for|frame|if|individual|interface|item|join|loop|merge|message|metaclass|metadata|objective|occurrence|part|perform|port|reference|render|rendering|require|requirement|return|satisfy|scenario|send|situation|snapshot|stakeholder|state|struct|subject|succession|succession-as|timeslice|transition|until|use|use-case|verification|verify|view|viewpoint)\\b",
+      "name": "keyword.control.mercurio"
+    },
+    {
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.mercurio"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.mercurio"
+        },
+        {
+          "begin": "/\\*",
+          "end": "\\*/",
+          "name": "comment.block.mercurio"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b\\d+(?:\\.\\d+)?\\b",
+          "name": "constant.numeric.mercurio"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.mercurio",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.mercurio"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "scopeName": "source.mercurio"
+}
