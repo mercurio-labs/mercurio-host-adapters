@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mercurio-authoring = { path = "../../../mercurio-foundation/crates/mercurio-authoring" }
 mercurio-kir = { path = "../../../mercurio-foundation/crates/mercurio-kir" }
 mercurio-language-contracts = { path = "../../../mercurio-foundation/crates/mercurio-language-contracts" }
 mercurio-model = { path = "../../../mercurio-foundation/crates/mercurio-model" }
