@@ -4,3 +4,4 @@ docs/_build/
 /.idea/
 python/*.egg-info/
 python/**/__pycache__/
+dist/

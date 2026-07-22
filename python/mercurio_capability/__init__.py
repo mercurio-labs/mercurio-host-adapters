@@ -28,4 +28,4 @@ __all__ = [
     "SourceSpanRef",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.85.0"

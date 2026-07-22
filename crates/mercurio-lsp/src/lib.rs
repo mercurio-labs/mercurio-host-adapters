@@ -821,11 +821,9 @@ impl LanguageServer {
             .metatype_specialization_chain
             .iter()
             .map(|item| item.label.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        json!({"contents":{"kind":"markdown","value":format!(
-            "**{}**\\n\\nMetaclass: {}\\n\\nMetatype chain: {}\\n\\nEffective values:\\n{}",
-            target, metatype, chain, serde_json::to_string_pretty(&effective).unwrap_or_default()
+            .collect::<Vec<_>>();
+        json!({"contents":{"kind":"markdown","value":format_hover_markdown(
+            &target, metatype, &chain, &effective
         )}})
     }
 
@@ -916,6 +914,78 @@ pub fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()>
     writer.flush()
 }
 
+fn format_hover_markdown(
+    target: &str,
+    metatype: &str,
+    chain: &[&str],
+    effective: &BTreeMap<String, Value>,
+) -> String {
+    let property = |names: &[&str]| {
+        names
+            .iter()
+            .find_map(|name| effective.get(*name).and_then(format_hover_value))
+    };
+    let title = property(&["declared_name", "name"])
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| target.to_string());
+    let mut markdown = format!(
+        "**{}**  \n`{}`",
+        markdown_inline(&title),
+        markdown_inline(metatype)
+    );
+
+    if let Some(qualified_name) = property(&["qualifiedName", "qualified_name"])
+        .filter(|value| value != &title && value != target)
+    {
+        markdown.push_str(&format!("\n\n`{}`", markdown_inline(&qualified_name)));
+    }
+
+    for (label, names) in [
+        ("Type", &["type", "definition"][..]),
+        (
+            "Owner",
+            &["owning_namespace", "owner", "owning_type", "featuring_type"][..],
+        ),
+        ("Specializes", &["specializes"][..]),
+    ] {
+        if let Some(value) = property(names).filter(|value| !value.is_empty()) {
+            markdown.push_str(&format!("\n\n- **{label}:** `{}`", markdown_inline(&value)));
+        }
+    }
+
+    if !chain.is_empty() {
+        let mut labels = chain
+            .iter()
+            .take(5)
+            .map(|label| markdown_inline(label))
+            .collect::<Vec<_>>();
+        if chain.len() > labels.len() {
+            labels.push("…".to_string());
+        }
+        markdown.push_str(&format!("\n\nMetatype chain: `{}`", labels.join(" → ")));
+    }
+    markdown
+}
+
+fn format_hover_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Array(values) => {
+            let values = values
+                .iter()
+                .filter_map(format_hover_value)
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then(|| values.join(", "))
+        }
+        Value::Null | Value::Object(_) => None,
+    }
+}
+
+fn markdown_inline(value: &str) -> String {
+    value.replace('`', "\\`").replace(['\r', '\n'], " ")
+}
 fn workspace_paths(params: &Value) -> Vec<PathBuf> {
     let mut paths = params
         .get("workspaceFolders")
@@ -1198,6 +1268,48 @@ fn zero_range() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hover_markdown_is_compact_and_human_readable() {
+        let effective = BTreeMap::from([
+            ("declared_name".to_string(), json!("shoot")),
+            (
+                "qualifiedName".to_string(),
+                json!("Camera::imagingSubsystem::shoot"),
+            ),
+            ("type".to_string(), json!("PictureTaking::Shoot")),
+            (
+                "owning_namespace".to_string(),
+                json!("Camera::imagingSubsystem"),
+            ),
+            (
+                "specializes".to_string(),
+                json!(["kerml::Feature", "Actions::performedActions"]),
+            ),
+            ("is_unique".to_string(), json!(true)),
+        ]);
+        let markdown = format_hover_markdown(
+            "perform.Camera.imagingSubsystem.shoot",
+            "PerformActionUsage",
+            &[
+                "ActionUsage",
+                "Step",
+                "Feature",
+                "Type",
+                "Namespace",
+                "Element",
+            ],
+            &effective,
+        );
+
+        assert!(markdown.starts_with("**shoot**  \n`PerformActionUsage`"));
+        assert!(markdown.contains("`Camera::imagingSubsystem::shoot`"));
+        assert!(markdown.contains("- **Type:** `PictureTaking::Shoot`"));
+        assert!(markdown.contains("- **Owner:** `Camera::imagingSubsystem`"));
+        assert!(markdown.contains("ActionUsage → Step → Feature → Type → Namespace → …"));
+        assert!(!markdown.contains("is_unique"));
+        assert!(!markdown.contains("\\n"));
+        assert!(!markdown.contains('{'));
+    }
     #[test]
     fn framing_and_utf16_conversion_are_stable() {
         let value = json!({"jsonrpc":"2.0","id":1,"method":"initialize"});
