@@ -16,6 +16,23 @@ use mercurio_workspace::{
 };
 use serde_json::{Value, json};
 
+pub const LSP_PROTOCOL_VERSION: &str = "1.0";
+pub const PROJECT_DESCRIPTOR_SCHEMA_MIN: u64 = 1;
+pub const PROJECT_DESCRIPTOR_SCHEMA_MAX: u64 = 2;
+
+fn protocol_metadata(languages: Vec<String>) -> Value {
+    json!({
+        "serverVersion": env!("CARGO_PKG_VERSION"),
+        "protocolVersion": LSP_PROTOCOL_VERSION,
+        "projectDescriptorSchema": {
+            "min": PROJECT_DESCRIPTOR_SCHEMA_MIN,
+            "max": PROJECT_DESCRIPTOR_SCHEMA_MAX
+        },
+        "languages": languages,
+        "capabilities": ["language-services", "project-containment", "element-at-position", "virtual-documents"]
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionKeyword {
     pub label: String,
@@ -106,7 +123,11 @@ impl LanguageServer {
             "textDocument/didChange" => self.did_change(&params),
             "textDocument/didClose" => self.did_close(&params),
             "workspace/didChangeWatchedFiles" => self.did_change_watched_files(),
+            "mercurio/serverMetadata" => vec![response(id, self.metadata())],
             "mercurio/projectContainment" => vec![response(id, self.project_containment())],
+            "mercurio/elementAtPosition" => {
+                vec![response(id, self.containment_element_at(&params))]
+            }
             "textDocument/documentSymbol" => vec![response(id, self.document_symbols(&params))],
             "workspace/symbol" => vec![response(id, self.workspace_symbols(&params))],
             "textDocument/definition" => vec![response(id, self.definition(&params))],
@@ -124,6 +145,19 @@ impl LanguageServer {
             ],
             _ => Vec::new(),
         }
+    }
+
+    pub fn metadata(&self) -> Value {
+        let mut languages = self
+            .registry
+            .services()
+            .iter()
+            .flat_map(|service| service.extensions().iter())
+            .map(|extension| extension.trim_start_matches('.').to_string())
+            .collect::<Vec<_>>();
+        languages.sort();
+        languages.dedup();
+        protocol_metadata(languages)
     }
 
     pub fn is_shutdown(&self) -> bool {
@@ -149,7 +183,8 @@ impl LanguageServer {
                 "codeActionProvider":true,
                 "semanticTokensProvider":{"legend":{"tokenTypes":["keyword","type","variable","property","namespace"],"tokenModifiers":["declaration","readonly"]},"full":true},
                 "documentFormattingProvider":true
-            },"serverInfo":{"name":"mercurio-lsp","version":env!("CARGO_PKG_VERSION")}}),
+            },"serverInfo":{"name":"mercurio-lsp","version":env!("CARGO_PKG_VERSION")},
+            "experimental":{"mercurio":self.metadata()}}),
         )]
     }
 
@@ -289,6 +324,21 @@ impl LanguageServer {
             })
             .collect::<Vec<_>>();
         json!({"projects":projects,"errors":self.project_errors})
+    }
+
+    fn containment_element_at(&self, params: &Value) -> Value {
+        let Some((uri, offset)) = self.position(params) else {
+            return Value::Null;
+        };
+        let element_id = self
+            .analyses
+            .get(uri)
+            .and_then(|analysis| analysis.element_at(uri, offset))
+            .map(|element| element.element_id.clone())
+            .or_else(|| self.target_at(uri, offset));
+        element_id
+            .map(|element_id| json!({"elementId": element_id, "uri": uri}))
+            .unwrap_or(Value::Null)
     }
 
     fn did_open(&mut self, params: &Value) -> Vec<Value> {
@@ -932,7 +982,8 @@ fn project_mode_name(mode: ProjectSourceMode) -> &'static str {
 
 fn path_to_file_uri(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    let encoded = percent_encode_path(&normalized);
+    let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+    let encoded = percent_encode_path(normalized);
     if cfg!(windows) {
         format!("file:///{encoded}")
     } else {
@@ -1162,5 +1213,10 @@ mod tests {
             Some(5)
         );
         assert_eq!(byte_position(text, 5), json!({"line":0,"character":3}));
+        #[cfg(windows)]
+        assert_eq!(
+            path_to_file_uri(Path::new(r"\\?\C:\workspace\model.sysml")),
+            "file:///C:/workspace/model.sysml"
+        );
     }
 }

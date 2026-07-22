@@ -107,14 +107,31 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mercurio-host-adapters
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: actions/download-artifact@v4
         with:
           pattern: python-wheels-*
           path: dist
           merge-multiple: true
+      - name: Generate Python SDK artifact manifest
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python mercurio-host-adapters/scripts/generate-python-sdk-manifest.py \
+            --dist dist \
+            --version "$version" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --output dist/mercurio-python-sdk.json
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/mercurio-python-sdk.json
           prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
 
