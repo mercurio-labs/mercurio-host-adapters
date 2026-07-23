@@ -8,7 +8,7 @@
           "property": "members",
           "source_name": "types.sysml",
           "span": {
-            "end_byte": 39,
+            "end_byte": 37,
             "start_byte": 0
           },
           "target_element_id": "type.Demo.Vehicle",
@@ -19,8 +19,8 @@
           "property": "specializes",
           "source_name": "types.sysml",
           "span": {
-            "end_byte": 36,
-            "start_byte": 20
+            "end_byte": 35,
+            "start_byte": 19
           },
           "target_element_id": "Parts::Part",
           "target_source_name": "mercurio-stdlib://library"
@@ -30,8 +30,8 @@
           "property": "owner",
           "source_name": "types.sysml",
           "span": {
-            "end_byte": 36,
-            "start_byte": 20
+            "end_byte": 35,
+            "start_byte": 19
           },
           "target_element_id": "pkg.Demo",
           "target_source_name": "types.sysml"
@@ -46,7 +46,7 @@
           "qualified_name": "Demo",
           "source_name": "types.sysml",
           "span": {
-            "end_byte": 39,
+            "end_byte": 37,
             "start_byte": 0
           }
         },
@@ -56,8 +56,8 @@
           "qualified_name": "Demo.Vehicle",
           "source_name": "types.sysml",
           "span": {
-            "end_byte": 36,
-            "start_byte": 20
+            "end_byte": 35,
+            "start_byte": 19
           }
         }
       ]
@@ -70,7 +70,7 @@
           "property": "members",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 61,
+            "end_byte": 58,
             "start_byte": 0
           },
           "target_element_id": "feature.Use.car",
@@ -81,8 +81,8 @@
           "property": "owner",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 33,
-            "start_byte": 19
+            "end_byte": 32,
+            "start_byte": 18
           },
           "target_element_id": "pkg.Use",
           "target_source_name": "use.sysml"
@@ -92,8 +92,8 @@
           "property": "specializes",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "Parts::parts",
           "target_source_name": "mercurio-stdlib://library"
@@ -103,8 +103,8 @@
           "property": "subsetted_features",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "Parts::parts",
           "target_source_name": "mercurio-stdlib://library"
@@ -114,8 +114,8 @@
           "property": "owner",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "pkg.Use",
           "target_source_name": "use.sysml"
@@ -125,8 +125,8 @@
           "property": "definition",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "type.Demo.Vehicle",
           "target_source_name": "types.sysml"
@@ -136,8 +136,8 @@
           "property": "specializes",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "type.Demo.Vehicle",
           "target_source_name": "types.sysml"
@@ -147,8 +147,8 @@
           "property": "type",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           },
           "target_element_id": "type.Demo.Vehicle",
           "target_source_name": "types.sysml"
@@ -163,7 +163,7 @@
           "qualified_name": "Use",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 61,
+            "end_byte": 58,
             "start_byte": 0
           }
         },
@@ -173,8 +173,8 @@
           "qualified_name": "Use.car",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 58,
-            "start_byte": 40
+            "end_byte": 56,
+            "start_byte": 38
           }
         },
         {
@@ -183,8 +183,8 @@
           "qualified_name": "pkg.Use.1",
           "source_name": "use.sysml",
           "span": {
-            "end_byte": 33,
-            "start_byte": 19
+            "end_byte": 32,
+            "start_byte": 18
           }
         }
       ]
