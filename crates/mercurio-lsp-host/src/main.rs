@@ -116,12 +116,13 @@ mod tests {
             "jsonrpc":"2.0","id":4,"method":"textDocument/hover",
             "params":{"textDocument":{"uri":second},"position":{"line":0,"character":41}}
         }));
-        assert!(
-            hover[0]
-                .pointer("/result/contents/value")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.contains("Effective values"))
-        );
+        let hover_markdown = hover[0]
+            .pointer("/result/contents/value")
+            .and_then(Value::as_str)
+            .expect("hover response should contain markdown");
+        assert!(hover_markdown.contains("Vehicle"));
+        assert!(!hover_markdown.contains("Effective values"));
+        assert!(!hover_markdown.contains('{'));
 
         let symbol_completion = server.handle(json!({
             "jsonrpc":"2.0","id":5,"method":"textDocument/completion",
