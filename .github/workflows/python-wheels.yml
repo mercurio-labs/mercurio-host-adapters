@@ -38,6 +38,11 @@ jobs:
           repository: mercurio-labs/mercurio-sysml
           ref: ${{ env.SYSML_REF }}
           path: mercurio-sysml
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-examples
+          ref: ${{ env.EXAMPLES_REF }}
+          path: mercurio-examples
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
