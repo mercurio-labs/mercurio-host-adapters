@@ -11,12 +11,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let documents = paths
         .iter()
         .map(|path| {
+            let source = fs::read_to_string(path)?
+                .replace("\r\n", "\n")
+                .replace('\r', "\n");
             Ok(SourceDocument::new(
                 path.file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or_default(),
                 1,
-                fs::read_to_string(path)?,
+                source,
             ))
         })
         .collect::<Result<Vec<_>, std::io::Error>>()?;
