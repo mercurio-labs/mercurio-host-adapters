@@ -231,6 +231,7 @@ version = "0.1.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
+ "mercurio-model",
  "mercurio-workspace",
  "serde",
  "serde_json",
@@ -295,8 +296,9 @@ dependencies = [
 
 [[package]]
 name = "mercurio-lsp"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
+ "mercurio-authoring",
  "mercurio-kir",
  "mercurio-language-contracts",
  "mercurio-model",
@@ -307,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-lsp-host"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kerml",
  "mercurio-language-contracts",
@@ -329,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-python"
-version = "0.1.0-beta.4"
+version = "0.85.0"
 dependencies = [
  "mercurio-core",
  "mercurio-simulation",
@@ -429,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-view-model"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-core",
  "mercurio-views",
@@ -450,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-wasm"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "console_error_panic_hook",
  "mercurio-core",

@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use mercurio_authoring::build_semantic_editor_outline_from_document;
 use mercurio_kir::KirDocument;
 use mercurio_language_contracts::{
     LanguageAnalysis, LanguageRegistry, ScopeProvider, SourceDocument, SymbolDescriptor, TextRange,
@@ -9,8 +10,28 @@ use mercurio_language_contracts::{
 };
 use mercurio_model::{Graph, MetamodelAttributeRegistry, query_element_attributes};
 use mercurio_semantic_services::mutation::ModelChangeEvent;
-use mercurio_workspace::WorkspaceSymbolIndex;
+use mercurio_workspace::{
+    ProjectSourceMode, WorkspaceSymbolIndex, resolve_project_descriptor_context,
+    resolve_project_sources,
+};
 use serde_json::{Value, json};
+
+pub const LSP_PROTOCOL_VERSION: &str = "1.0";
+pub const PROJECT_DESCRIPTOR_SCHEMA_MIN: u64 = 1;
+pub const PROJECT_DESCRIPTOR_SCHEMA_MAX: u64 = 2;
+
+fn protocol_metadata(languages: Vec<String>) -> Value {
+    json!({
+        "serverVersion": env!("CARGO_PKG_VERSION"),
+        "protocolVersion": LSP_PROTOCOL_VERSION,
+        "projectDescriptorSchema": {
+            "min": PROJECT_DESCRIPTOR_SCHEMA_MIN,
+            "max": PROJECT_DESCRIPTOR_SCHEMA_MAX
+        },
+        "languages": languages,
+        "capabilities": ["language-services", "project-containment", "element-at-position", "virtual-documents"]
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionKeyword {
@@ -24,11 +45,26 @@ struct OpenDocument {
     text: String,
 }
 
+#[derive(Debug, Clone)]
+struct ProjectState {
+    id: String,
+    name: String,
+    mode: ProjectSourceMode,
+    descriptor_uri: Option<String>,
+    source_paths: BTreeMap<String, String>,
+    library: KirDocument,
+}
+
 pub struct LanguageServer {
     registry: LanguageRegistry,
     library: KirDocument,
     documents: BTreeMap<String, OpenDocument>,
     analyses: BTreeMap<String, LanguageAnalysis>,
+    disk_documents: BTreeMap<String, OpenDocument>,
+    open_documents: BTreeSet<String>,
+    workspace_roots: Vec<PathBuf>,
+    projects: Vec<ProjectState>,
+    project_errors: Vec<String>,
     index: WorkspaceSymbolIndex,
     completion_keywords: Vec<CompletionKeyword>,
     shutdown: bool,
@@ -59,6 +95,11 @@ impl LanguageServer {
             documents: BTreeMap::new(),
             analyses: BTreeMap::new(),
             index,
+            disk_documents: BTreeMap::new(),
+            open_documents: BTreeSet::new(),
+            workspace_roots: Vec::new(),
+            projects: Vec::new(),
+            project_errors: Vec::new(),
             completion_keywords,
             shutdown: false,
         }
@@ -72,19 +113,7 @@ impl LanguageServer {
             .unwrap_or_default();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         match method {
-            "initialize" => vec![response(
-                id,
-                json!({"capabilities":{
-                "textDocumentSync":{"openClose":true,"change":2},
-                "documentSymbolProvider":true,"workspaceSymbolProvider":true,
-                "definitionProvider":true,"referencesProvider":true,"hoverProvider":true,
-                "completionProvider":{"triggerCharacters":[" ",":",".","@"]},
-                "renameProvider":{"prepareProvider":true},
-                "codeActionProvider":true,
-                "semanticTokensProvider":{"legend":{"tokenTypes":["keyword","type","variable","property","namespace"],"tokenModifiers":["declaration","readonly"]},"full":true},
-                "documentFormattingProvider":true
-            },"serverInfo":{"name":"mercurio-lsp","version":env!("CARGO_PKG_VERSION")}}),
-            )],
+            "initialize" => self.initialize(id, &params),
             "initialized" | "exit" => Vec::new(),
             "shutdown" => {
                 self.shutdown = true;
@@ -93,6 +122,12 @@ impl LanguageServer {
             "textDocument/didOpen" => self.did_open(&params),
             "textDocument/didChange" => self.did_change(&params),
             "textDocument/didClose" => self.did_close(&params),
+            "workspace/didChangeWatchedFiles" => self.did_change_watched_files(),
+            "mercurio/serverMetadata" => vec![response(id, self.metadata())],
+            "mercurio/projectContainment" => vec![response(id, self.project_containment())],
+            "mercurio/elementAtPosition" => {
+                vec![response(id, self.containment_element_at(&params))]
+            }
             "textDocument/documentSymbol" => vec![response(id, self.document_symbols(&params))],
             "workspace/symbol" => vec![response(id, self.workspace_symbols(&params))],
             "textDocument/definition" => vec![response(id, self.definition(&params))],
@@ -112,12 +147,198 @@ impl LanguageServer {
         }
     }
 
+    pub fn metadata(&self) -> Value {
+        let mut languages = self
+            .registry
+            .services()
+            .iter()
+            .flat_map(|service| service.extensions().iter())
+            .map(|extension| extension.trim_start_matches('.').to_string())
+            .collect::<Vec<_>>();
+        languages.sort();
+        languages.dedup();
+        protocol_metadata(languages)
+    }
+
     pub fn is_shutdown(&self) -> bool {
         self.shutdown
     }
 
     pub fn model_changed(&mut self, _event: &ModelChangeEvent) -> Vec<Value> {
         self.refresh()
+    }
+
+    fn initialize(&mut self, id: Option<Value>, params: &Value) -> Vec<Value> {
+        self.workspace_roots = workspace_paths(params);
+        self.load_workspace_projects();
+        let _ = self.refresh();
+        vec![response(
+            id,
+            json!({"capabilities":{
+                "textDocumentSync":{"openClose":true,"change":2},
+                "documentSymbolProvider":true,"workspaceSymbolProvider":true,
+                "definitionProvider":true,"referencesProvider":true,"hoverProvider":true,
+                "completionProvider":{"triggerCharacters":[" ",":",".","@"]},
+                "renameProvider":{"prepareProvider":true},
+                "codeActionProvider":true,
+                "semanticTokensProvider":{"legend":{"tokenTypes":["keyword","type","variable","property","namespace"],"tokenModifiers":["declaration","readonly"]},"full":true},
+                "documentFormattingProvider":true
+            },"serverInfo":{"name":"mercurio-lsp","version":env!("CARGO_PKG_VERSION")},
+            "experimental":{"mercurio":self.metadata()}}),
+        )]
+    }
+
+    fn load_workspace_projects(&mut self) {
+        self.disk_documents.clear();
+        self.projects.clear();
+        self.project_errors.clear();
+        let extensions = self
+            .registry
+            .services()
+            .iter()
+            .flat_map(|service| service.extensions().iter().copied())
+            .collect::<Vec<_>>();
+        for workspace_root in self.workspace_roots.clone() {
+            let mut project_paths = vec![workspace_root.clone()];
+            project_paths.extend(nested_descriptor_paths(&workspace_root));
+            project_paths.sort();
+            project_paths.dedup();
+            for project_path in project_paths {
+                match resolve_project_sources(&project_path, &extensions) {
+                    Ok(sources) => {
+                        let descriptor_name = sources
+                            .descriptor
+                            .as_ref()
+                            .and_then(|descriptor| descriptor.name.clone());
+                        let descriptor_uri =
+                            sources.descriptor_path.as_deref().map(path_to_file_uri);
+                        let library = if let Some(descriptor_path) =
+                            sources.descriptor_path.as_deref()
+                        {
+                            match resolve_project_descriptor_context(descriptor_path) {
+                                Ok(context)
+                                    if !context.library_context_document.elements.is_empty() =>
+                                {
+                                    context.library_context_document
+                                }
+                                Ok(_) => self.library.clone(),
+                                Err(error) => {
+                                    self.project_errors
+                                        .push(format!("{}: {error}", descriptor_path.display()));
+                                    self.library.clone()
+                                }
+                            }
+                        } else {
+                            self.library.clone()
+                        };
+                        let mut source_paths = BTreeMap::new();
+                        for source in sources.files {
+                            let uri = path_to_file_uri(&source.path);
+                            source_paths.insert(uri.clone(), source.relative_path);
+                            self.disk_documents.insert(
+                                uri,
+                                OpenDocument {
+                                    revision: 0,
+                                    text: source.text,
+                                },
+                            );
+                        }
+                        let name = descriptor_name.unwrap_or_else(|| {
+                            sources
+                                .workspace_root
+                                .file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("Mercurio Project")
+                                .to_string()
+                        });
+                        self.projects.push(ProjectState {
+                            id: path_to_file_uri(&sources.workspace_root),
+                            name,
+                            mode: sources.mode,
+                            descriptor_uri,
+                            source_paths,
+                            library,
+                        });
+                    }
+                    Err(error) => self
+                        .project_errors
+                        .push(format!("{}: {error}", project_path.display())),
+                }
+            }
+        }
+        self.documents
+            .retain(|uri, _| self.open_documents.contains(uri));
+        for (uri, document) in &self.disk_documents {
+            if !self.open_documents.contains(uri) {
+                self.documents.insert(uri.clone(), document.clone());
+            }
+        }
+    }
+
+    fn did_change_watched_files(&mut self) -> Vec<Value> {
+        self.load_workspace_projects();
+        self.refresh_with_containment_change()
+    }
+
+    fn refresh_with_containment_change(&mut self) -> Vec<Value> {
+        let mut messages = self.refresh();
+        messages.push(json!({
+            "jsonrpc":"2.0",
+            "method":"mercurio/projectContainmentChanged",
+            "params":{}
+        }));
+        messages
+    }
+
+    fn project_containment(&self) -> Value {
+        let projects = self
+            .projects
+            .iter()
+            .map(|project| {
+                let files = project
+                    .source_paths
+                    .iter()
+                    .map(|(uri, relative_path)| {
+                        let children = self
+                            .analyses
+                            .get(uri)
+                            .and_then(|analysis| analysis.document.as_ref())
+                            .map(|document| {
+                                build_semantic_editor_outline_from_document(uri, document)
+                            })
+                            .unwrap_or_default();
+                        json!({
+                            "uri":uri,
+                            "path":relative_path,
+                            "children":children
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "id":project.id,
+                    "name":project.name,
+                    "mode":project_mode_name(project.mode),
+                    "descriptorUri":project.descriptor_uri,
+                    "files":files
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({"projects":projects,"errors":self.project_errors})
+    }
+
+    fn containment_element_at(&self, params: &Value) -> Value {
+        let Some((uri, offset)) = self.position(params) else {
+            return Value::Null;
+        };
+        let element_id = self
+            .analyses
+            .get(uri)
+            .and_then(|analysis| analysis.element_at(uri, offset))
+            .map(|element| element.element_id.clone())
+            .or_else(|| self.target_at(uri, offset));
+        element_id
+            .map(|element_id| json!({"elementId": element_id, "uri": uri}))
+            .unwrap_or(Value::Null)
     }
 
     fn did_open(&mut self, params: &Value) -> Vec<Value> {
@@ -127,6 +348,7 @@ impl LanguageServer {
         let Some(uri) = document.get("uri").and_then(Value::as_str) else {
             return Vec::new();
         };
+        self.open_documents.insert(uri.to_string());
         self.documents.insert(
             uri.to_string(),
             OpenDocument {
@@ -138,7 +360,7 @@ impl LanguageServer {
                     .to_string(),
             },
         );
-        self.refresh()
+        self.refresh_with_containment_change()
     }
 
     fn did_change(&mut self, params: &Value) -> Vec<Value> {
@@ -181,30 +403,58 @@ impl LanguageServer {
             }
         }
         document.revision = revision(identifier);
-        self.refresh()
+        self.refresh_with_containment_change()
     }
 
     fn did_close(&mut self, params: &Value) -> Vec<Value> {
         let Some(uri) = document_uri(params) else {
             return Vec::new();
         };
-        self.documents.remove(uri);
-        self.analyses.remove(uri);
-        self.index.remove(uri);
-        vec![publish_diagnostics(uri, Vec::new())]
+        self.open_documents.remove(uri);
+        if let Some(document) = self.disk_documents.get(uri) {
+            self.documents.insert(uri.to_string(), document.clone());
+        } else {
+            self.documents.remove(uri);
+            self.analyses.remove(uri);
+            self.index.remove(uri);
+        }
+        self.refresh_with_containment_change()
     }
 
     fn refresh(&mut self) -> Vec<Value> {
-        let sources = self
-            .documents
-            .iter()
-            .map(|(name, document)| SourceDocument::new(name, document.revision, &document.text))
+        let stale = self
+            .analyses
+            .keys()
+            .filter(|uri| !self.documents.contains_key(*uri))
+            .cloned()
             .collect::<Vec<_>>();
+        for uri in stale {
+            self.analyses.remove(&uri);
+            self.index.remove(&uri);
+        }
         for name in self.documents.keys().cloned().collect::<Vec<_>>() {
             let Some(service) = self.registry.service_for_path(Path::new(&name)) else {
                 continue;
             };
-            if let Some(analysis) = service.analyze_workspace(&sources, &name, &self.library) {
+            let project = self
+                .projects
+                .iter()
+                .find(|project| project.source_paths.contains_key(&name));
+            let source_names = project
+                .map(|project| project.source_paths.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_else(|| self.documents.keys().cloned().collect());
+            let sources = source_names
+                .iter()
+                .filter_map(|source_name| {
+                    self.documents.get(source_name).map(|document| {
+                        SourceDocument::new(source_name, document.revision, &document.text)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let library = project
+                .map(|project| &project.library)
+                .unwrap_or(&self.library);
+            if let Some(analysis) = service.analyze_workspace(&sources, &name, library) {
                 self.index.update(analysis.symbols.clone());
                 self.analyses.insert(name, analysis);
             }
@@ -571,11 +821,9 @@ impl LanguageServer {
             .metatype_specialization_chain
             .iter()
             .map(|item| item.label.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        json!({"contents":{"kind":"markdown","value":format!(
-            "**{}**\\n\\nMetaclass: {}\\n\\nMetatype chain: {}\\n\\nEffective values:\\n{}",
-            target, metatype, chain, serde_json::to_string_pretty(&effective).unwrap_or_default()
+            .collect::<Vec<_>>();
+        json!({"contents":{"kind":"markdown","value":format_hover_markdown(
+            &target, metatype, &chain, &effective
         )}})
     }
 
@@ -664,6 +912,207 @@ pub fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()>
     write!(writer, "Content-Length: {}\r\n\r\n", bytes.len())?;
     writer.write_all(&bytes)?;
     writer.flush()
+}
+
+fn format_hover_markdown(
+    target: &str,
+    metatype: &str,
+    chain: &[&str],
+    effective: &BTreeMap<String, Value>,
+) -> String {
+    let property = |names: &[&str]| {
+        names
+            .iter()
+            .find_map(|name| effective.get(*name).and_then(format_hover_value))
+    };
+    let title = property(&["declared_name", "name"])
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| target.to_string());
+    let mut markdown = format!(
+        "**{}**  \n`{}`",
+        markdown_inline(&title),
+        markdown_inline(metatype)
+    );
+
+    if let Some(qualified_name) = property(&["qualifiedName", "qualified_name"])
+        .filter(|value| value != &title && value != target)
+    {
+        markdown.push_str(&format!("\n\n`{}`", markdown_inline(&qualified_name)));
+    }
+
+    for (label, names) in [
+        ("Type", &["type", "definition"][..]),
+        (
+            "Owner",
+            &["owning_namespace", "owner", "owning_type", "featuring_type"][..],
+        ),
+        ("Specializes", &["specializes"][..]),
+    ] {
+        if let Some(value) = property(names).filter(|value| !value.is_empty()) {
+            markdown.push_str(&format!("\n\n- **{label}:** `{}`", markdown_inline(&value)));
+        }
+    }
+
+    if !chain.is_empty() {
+        let mut labels = chain
+            .iter()
+            .take(5)
+            .map(|label| markdown_inline(label))
+            .collect::<Vec<_>>();
+        if chain.len() > labels.len() {
+            labels.push("…".to_string());
+        }
+        markdown.push_str(&format!("\n\nMetatype chain: `{}`", labels.join(" → ")));
+    }
+    markdown
+}
+
+fn format_hover_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Array(values) => {
+            let values = values
+                .iter()
+                .filter_map(format_hover_value)
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then(|| values.join(", "))
+        }
+        Value::Null | Value::Object(_) => None,
+    }
+}
+
+fn markdown_inline(value: &str) -> String {
+    value.replace('`', "\\`").replace(['\r', '\n'], " ")
+}
+fn workspace_paths(params: &Value) -> Vec<PathBuf> {
+    let mut paths = params
+        .get("workspaceFolders")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| folder.get("uri").and_then(Value::as_str))
+        .filter_map(file_uri_to_path)
+        .collect::<Vec<_>>();
+    if paths.is_empty()
+        && let Some(path) = params
+            .get("rootUri")
+            .and_then(Value::as_str)
+            .and_then(file_uri_to_path)
+    {
+        paths.push(path);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn nested_descriptor_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    fn visit(root: &Path, current: &Path, descriptors: &mut Vec<PathBuf>) {
+        if current != root {
+            let descriptor = current.join(mercurio_workspace::PROJECT_DESCRIPTOR_FILE_NAME);
+            if descriptor.is_file() {
+                descriptors.push(descriptor);
+                return;
+            }
+        }
+        let Ok(entries) = std::fs::read_dir(current) else {
+            return;
+        };
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        paths.sort();
+        for path in paths {
+            if matches!(
+                path.file_name().and_then(|value| value.to_str()),
+                Some(".git" | ".worktrees" | "node_modules" | "target")
+            ) {
+                continue;
+            }
+            visit(root, &path, descriptors);
+        }
+    }
+
+    let mut descriptors = Vec::new();
+    visit(workspace_root, workspace_root, &mut descriptors);
+    descriptors
+}
+
+fn project_mode_name(mode: ProjectSourceMode) -> &'static str {
+    match mode {
+        ProjectSourceMode::Descriptor => "descriptor",
+        ProjectSourceMode::Inferred => "inferred",
+        ProjectSourceMode::Loose => "loose",
+    }
+}
+
+fn path_to_file_uri(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+    let encoded = percent_encode_path(normalized);
+    if cfg!(windows) {
+        format!("file:///{encoded}")
+    } else {
+        format!("file://{encoded}")
+    }
+}
+
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    let encoded = uri.strip_prefix("file://")?;
+    let decoded = percent_decode_path(encoded);
+    if cfg!(windows) {
+        Some(PathBuf::from(decoded.trim_start_matches('/')))
+    } else {
+        Some(PathBuf::from(format!(
+            "/{decoded}",
+            decoded = decoded.trim_start_matches('/')
+        )))
+    }
+}
+
+fn percent_encode_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b':' | b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn response(id: Option<Value>, result: Value) -> Value {
@@ -820,6 +1269,48 @@ fn zero_range() -> Value {
 mod tests {
     use super::*;
     #[test]
+    fn hover_markdown_is_compact_and_human_readable() {
+        let effective = BTreeMap::from([
+            ("declared_name".to_string(), json!("shoot")),
+            (
+                "qualifiedName".to_string(),
+                json!("Camera::imagingSubsystem::shoot"),
+            ),
+            ("type".to_string(), json!("PictureTaking::Shoot")),
+            (
+                "owning_namespace".to_string(),
+                json!("Camera::imagingSubsystem"),
+            ),
+            (
+                "specializes".to_string(),
+                json!(["kerml::Feature", "Actions::performedActions"]),
+            ),
+            ("is_unique".to_string(), json!(true)),
+        ]);
+        let markdown = format_hover_markdown(
+            "perform.Camera.imagingSubsystem.shoot",
+            "PerformActionUsage",
+            &[
+                "ActionUsage",
+                "Step",
+                "Feature",
+                "Type",
+                "Namespace",
+                "Element",
+            ],
+            &effective,
+        );
+
+        assert!(markdown.starts_with("**shoot**  \n`PerformActionUsage`"));
+        assert!(markdown.contains("`Camera::imagingSubsystem::shoot`"));
+        assert!(markdown.contains("- **Type:** `PictureTaking::Shoot`"));
+        assert!(markdown.contains("- **Owner:** `Camera::imagingSubsystem`"));
+        assert!(markdown.contains("ActionUsage → Step → Feature → Type → Namespace → …"));
+        assert!(!markdown.contains("is_unique"));
+        assert!(!markdown.contains("\\n"));
+        assert!(!markdown.contains('{'));
+    }
+    #[test]
     fn framing_and_utf16_conversion_are_stable() {
         let value = json!({"jsonrpc":"2.0","id":1,"method":"initialize"});
         let mut bytes = Vec::new();
@@ -834,5 +1325,10 @@ mod tests {
             Some(5)
         );
         assert_eq!(byte_position(text, 5), json!({"line":0,"character":3}));
+        #[cfg(windows)]
+        assert_eq!(
+            path_to_file_uri(Path::new(r"\\?\C:\workspace\model.sysml")),
+            "file:///C:/workspace/model.sysml"
+        );
     }
 }

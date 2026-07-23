@@ -7,14 +7,16 @@ use serde_json::Value;
 fn compiler_oracle_fixture_is_regenerable_and_contains_cross_file_parity() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/language-workbench/expectations.json");
-    let before = fs::read(&path).unwrap();
+    let before = fs::read_to_string(&path).unwrap();
     let status = Command::new(env!("CARGO_BIN_EXE_generate_language_workbench_fixtures"))
         .status()
         .unwrap();
     assert!(status.success());
-    assert_eq!(fs::read(&path).unwrap(), before);
+    let after = fs::read_to_string(&path).unwrap();
+    fs::write(&path, &before).unwrap();
+    assert_eq!(after.replace("\r\n", "\n"), before.replace("\r\n", "\n"));
 
-    let expected: Value = serde_json::from_slice(&before).unwrap();
+    let expected: Value = serde_json::from_str(&before).unwrap();
     let documents = expected["documents"].as_array().unwrap();
     assert!(
         documents

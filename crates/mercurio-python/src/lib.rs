@@ -15,12 +15,13 @@ use mercurio_core::{
     SemanticNextActionsRequest, SemanticTransaction, SessionError, TransactionOperation,
     UnsupportedCellRun, WorkspaceSnapshot, WriteBackMode, WriteBackResult,
     collect_specialization_ancestors, default_language_profile, element_metatype,
-    generate_python_wrappers, resolve_project_descriptor_context, run_cell_with_handlers,
+    generate_python_wrappers, resolve_project_descriptor_context, resolve_project_sources,
+    run_cell_with_handlers,
 };
 use mercurio_simulation::run_analysis_case as run_sysml_analysis_case;
 use mercurio_sysml::{
-    StdlibLocator, SysmlModelForkExt, compile_sysml_text, compile_sysml_text_with_context,
-    list_analysis_specs, load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
+    StdlibLocator, SysmlModelForkExt, compile_sysml_text_with_context, list_analysis_specs,
+    load_authoring_project_from_sysml, load_sysml_baseline, parse_sysml,
     resolve_default_stdlib_locator, sysml_field_specs, sysml_mutation_feasibility_service,
     sysml_semantic_legality_service, sysml_semantic_next_actions_service,
 };
@@ -38,7 +39,6 @@ use pyo3::types::{PyAny, PyType};
 use serde::{Deserialize, Serialize};
 
 static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
-const PROJECT_DESCRIPTOR_FILE_NAME: &str = ".project.json";
 
 #[pyclass(name = "WriteBackResult")]
 #[derive(Debug, Clone)]
@@ -1276,18 +1276,6 @@ struct ProjectSources {
 }
 
 fn compile_workspace_path(path: &Path) -> PyResult<KirDocument> {
-    if path.is_file()
-        && path.file_name().and_then(|value| value.to_str()) != Some(PROJECT_DESCRIPTOR_FILE_NAME)
-    {
-        let source = std::fs::read_to_string(path).map_err(io_error)?;
-        return compile_sysml_text(
-            &source,
-            &path.display().to_string(),
-            default_stdlib_document()?,
-        )
-        .map_err(|err| PyValueError::new_err(err.to_string()));
-    }
-
     let sources = project_sources_for_open_path(path)?;
     if sources.files.is_empty() {
         return Err(PyValueError::new_err(format!(
@@ -1302,66 +1290,36 @@ fn compile_workspace_path(path: &Path) -> PyResult<KirDocument> {
 }
 
 fn project_sources_for_open_path(path: &Path) -> PyResult<ProjectSources> {
-    if path.is_file() {
-        if path.file_name().and_then(|value| value.to_str()) == Some(PROJECT_DESCRIPTOR_FILE_NAME) {
-            return project_sources_from_descriptor(path);
+    let resolved = resolve_project_sources(path, &["sysml"])
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let files = resolved
+        .files
+        .into_iter()
+        .map(|source| (source.relative_path, source.text))
+        .collect::<BTreeMap<_, _>>();
+    let library_context_document = match (
+        resolved.descriptor.as_ref(),
+        resolved.descriptor_path.as_deref(),
+    ) {
+        (Some(descriptor), _) if descriptor_uses_only_bundled_stdlib(descriptor) => {
+            Some(default_stdlib_document()?.clone())
         }
-        let source = std::fs::read_to_string(path).map_err(io_error)?;
-        let file_name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("model.sysml")
-            .to_string();
-        return Ok(ProjectSources {
-            files: BTreeMap::from([(file_name, source)]),
-            library_context_document: None,
-        });
-    }
-
-    if !path.is_dir() {
-        return Err(PyValueError::new_err(format!(
-            "workspace path does not exist: {}",
-            path.display()
-        )));
-    }
-
-    if let Some(descriptor_path) = find_project_descriptor(path) {
-        return project_sources_from_descriptor(&descriptor_path);
-    }
-
-    let mut files = BTreeMap::new();
-    collect_sysml_files(path, path, &mut files)?;
-    Ok(ProjectSources {
-        files,
-        library_context_document: None,
-    })
-}
-
-fn project_sources_from_descriptor(descriptor_path: &Path) -> PyResult<ProjectSources> {
-    let root = descriptor_path
-        .parent()
-        .ok_or_else(|| PyValueError::new_err("project descriptor has no parent directory"))?;
-    let content = std::fs::read_to_string(descriptor_path).map_err(io_error)?;
-    let descriptor: ProjectDescriptor =
-        serde_json::from_str(&content).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let files = project_source_files(root, Some(&descriptor))?;
-    if descriptor_uses_only_bundled_stdlib(&descriptor) {
-        return Ok(ProjectSources {
-            files,
-            library_context_document: Some(default_stdlib_document()?.clone()),
-        });
-    }
-    let context = resolve_project_descriptor_context(descriptor_path)
-        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-    let library_context_document = if context.library_context_document.elements.is_empty() {
-        None
-    } else {
-        Some(context.library_context_document)
+        (Some(_), Some(descriptor_path)) => {
+            let context = resolve_project_descriptor_context(descriptor_path)
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+            (!context.library_context_document.elements.is_empty())
+                .then_some(context.library_context_document)
+        }
+        _ => None,
     };
     Ok(ProjectSources {
         files,
         library_context_document,
     })
+}
+
+fn project_sources_from_descriptor(descriptor_path: &Path) -> PyResult<ProjectSources> {
+    project_sources_for_open_path(descriptor_path)
 }
 
 fn descriptor_uses_only_bundled_stdlib(descriptor: &ProjectDescriptor) -> bool {
@@ -1372,29 +1330,6 @@ fn descriptor_uses_only_bundled_stdlib(descriptor: &ProjectDescriptor) -> bool {
                 None | Some(LibraryProviderConfig::BundledStdlib)
             )
         })
-}
-
-fn project_source_files(
-    root: &Path,
-    descriptor: Option<&ProjectDescriptor>,
-) -> PyResult<BTreeMap<String, String>> {
-    let mut files = BTreeMap::new();
-    if let Some(descriptor) = descriptor {
-        if !descriptor.model.entrypoints.is_empty() {
-            for entrypoint in &descriptor.model.entrypoints {
-                collect_sysml_path(root, &root.join(entrypoint), &mut files)?;
-            }
-            return Ok(files);
-        }
-        if !descriptor.model.source_roots.is_empty() {
-            for source_root in &descriptor.model.source_roots {
-                collect_sysml_path(root, &root.join(source_root), &mut files)?;
-            }
-            return Ok(files);
-        }
-    }
-    collect_sysml_files(root, root, &mut files)?;
-    Ok(files)
 }
 
 fn compile_sysml_files_with_context(
@@ -1416,63 +1351,6 @@ fn compile_sysml_files_with_context(
     }
     KirDocument::merge_with_registered_fields(documents, sysml_field_specs().iter().copied())
         .map_err(|err| PyRuntimeError::new_err(err.to_string()))
-}
-
-fn find_project_descriptor(start: &Path) -> Option<PathBuf> {
-    let mut current = start.to_path_buf();
-    loop {
-        let candidate = current.join(PROJECT_DESCRIPTOR_FILE_NAME);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if !current.pop() {
-            return None;
-        }
-    }
-}
-
-fn collect_sysml_path(
-    root: &Path,
-    path: &Path,
-    files: &mut BTreeMap<String, String>,
-) -> PyResult<()> {
-    if path.is_dir() {
-        return collect_sysml_files(root, path, files);
-    }
-    if !path.is_file() {
-        return Err(PyValueError::new_err(format!(
-            "project source path does not exist: {}",
-            path.display()
-        )));
-    }
-    if path.extension().and_then(|value| value.to_str()) != Some("sysml") {
-        return Ok(());
-    }
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|err| PyRuntimeError::new_err(err.to_string()))?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let source = std::fs::read_to_string(path).map_err(io_error)?;
-    files.insert(relative, source);
-    Ok(())
-}
-
-fn collect_sysml_files(
-    root: &Path,
-    current: &Path,
-    files: &mut BTreeMap<String, String>,
-) -> PyResult<()> {
-    for entry in std::fs::read_dir(current).map_err(io_error)? {
-        let entry = entry.map_err(io_error)?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_sysml_files(root, &path, files)?;
-            continue;
-        }
-        collect_sysml_path(root, &path, files)?;
-    }
-    Ok(())
 }
 
 fn py_semantic_model(document: KirDocument) -> PyResult<PySemanticModel> {

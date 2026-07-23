@@ -17,9 +17,9 @@ on:
           - "pypi"
 
 env:
-  FOUNDATION_REF: 743b244802b5598b95cc22dbff0f4aa4ab064405
-  SYSML_REF: d3873c9020df0270d46bcd97096511a9c04c3d7d
-  EXAMPLES_REF: 533b75ca9c33ee9902fc2407ee8a2318536c702a
+  FOUNDATION_REF: 285ed9de2333517bc0f57ead42aa99e9b5b7c4a0
+  SYSML_REF: cf7eea2be6aed7668e7cbbdc2f8c95100c3b5d1b
+  EXAMPLES_REF: 261ecd8bd2b8fb0e7d45ee3c609a582bf2b62315
 
 jobs:
   source-tests:
@@ -44,7 +44,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test native Rust bindings
         working-directory: mercurio-host-adapters
-        run: cargo test -p mercurio-python --features embed-stdlib --locked
+        run: cargo test -p mercurio-python --no-default-features --features embed-stdlib --locked
       - name: Install Python test environment
         working-directory: mercurio-host-adapters
         run: python -m pip install -e ".[test]"
@@ -107,14 +107,31 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mercurio-host-adapters
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: actions/download-artifact@v4
         with:
           pattern: python-wheels-*
           path: dist
           merge-multiple: true
+      - name: Generate Python SDK artifact manifest
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python mercurio-host-adapters/scripts/generate-python-sdk-manifest.py \
+            --dist dist \
+            --version "$version" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --output dist/mercurio-python-sdk.json
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/mercurio-python-sdk.json
           prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
 

@@ -2,9 +2,19 @@ use mercurio_lsp::serve_stdio;
 use mercurio_lsp_host::create_language_server;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("{}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--metadata") => {
+            println!(
+                "{}",
+                serde_json::to_string(&create_language_server()?.metadata())?
+            );
+            return Ok(());
+        }
+        _ => {}
     }
     serve_stdio(create_language_server()?)?;
     Ok(())
@@ -21,6 +31,22 @@ mod tests {
     #[test]
     fn lsp_harness_covers_incremental_sync_outline_and_navigation() {
         let mut server = create_language_server().unwrap();
+
+        let metadata = server.handle(json!({
+            "jsonrpc":"2.0","id":0,"method":"mercurio/serverMetadata","params":{}
+        }));
+        assert_eq!(
+            metadata[0]
+                .pointer("/result/protocolVersion")
+                .and_then(Value::as_str),
+            Some("1.0")
+        );
+        assert_eq!(
+            metadata[0]
+                .pointer("/result/projectDescriptorSchema/max")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
 
         let first = "file:///workspace/types.sysml";
         let second = "file:///workspace/use.sysml";
@@ -48,6 +74,23 @@ mod tests {
             outline[0]["result"]
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
+        );
+
+        let active_element = server.handle(json!({
+            "jsonrpc":"2.0","id":12,"method":"mercurio/elementAtPosition",
+            "params":{"textDocument":{"uri":first},"position":{"line":0,"character":30}}
+        }));
+        assert_eq!(
+            active_element[0]
+                .pointer("/result/uri")
+                .and_then(Value::as_str),
+            Some(first)
+        );
+        assert!(
+            active_element[0]
+                .pointer("/result/elementId")
+                .and_then(Value::as_str)
+                .is_some_and(|element_id| !element_id.is_empty())
         );
 
         let definition = server.handle(json!({
