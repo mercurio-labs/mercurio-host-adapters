@@ -21,9 +21,9 @@ use mercurio_sysml::{
     sysml_parsed_module_assessment_facts,
 };
 use mercurio_views::{
-    DiagramError, DiagramRenderRequestDto, TableError, TableRenderRequestDto, list_diagram_kinds,
-    list_table_kinds, list_view_kinds, render_diagram, render_table,
-    view_catalog as build_view_catalog,
+    DiagramError, DiagramRenderRequestDto, DiagramViewDto, TableError, TableRenderRequestDto,
+    list_diagram_kinds, list_table_kinds, list_view_kinds, render_diagram, render_diagram_svg,
+    render_table, view_catalog as build_view_catalog,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -195,6 +195,18 @@ pub fn wasm_render_diagram(document: JsValue, request: JsValue) -> JsValue {
         let registry = MetamodelAttributeRegistry::build(&graph);
         let view = render_diagram(&graph, &registry, request.spec)?;
         Ok(success(serde_json::to_value(view)?, []))
+    })
+}
+
+/// Serialize an already-rendered diagram view to a standalone SVG string.
+///
+/// Layout is the deterministic server-side auto-layout used by
+/// `foundation.view.render`, not the on-screen React Flow positions.
+#[wasm_bindgen(js_name = renderDiagramSvg)]
+pub fn wasm_render_diagram_svg(view: JsValue) -> JsValue {
+    json_response(|| {
+        let view: DiagramViewDto = from_js(view)?;
+        Ok(success(Value::String(render_diagram_svg(&view)), []))
     })
 }
 
