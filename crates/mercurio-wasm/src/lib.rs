@@ -556,35 +556,79 @@ impl MercurioSession {
     pub fn add_source(&mut self, language: &str, source_name: &str, input: &str) -> JsValue {
         json_response(|| {
             let language = parse_language(language)?;
-            let context = self
-                .sources
-                .iter()
-                .map(|source| source.module.clone())
-                .collect::<Vec<_>>();
-            let module = match language {
-                SourceLanguage::Sysml => parse_sysml_recovering(input)?.module,
-                SourceLanguage::Kerml => parse_kerml(input)?,
-            };
-            let document = match language {
-                SourceLanguage::Sysml => compile_sysml_text_with_context_report(
-                    input,
-                    source_name,
-                    &context,
-                    &self.stdlib,
-                )
-                .document
-                .ok_or_else(|| WasmError::new("compile", "SysML compilation failed"))?,
-                SourceLanguage::Kerml => compile_kerml_text(input, source_name, &self.stdlib)?,
-            };
-            self.sources.push(SessionSource {
-                source_name: source_name.to_string(),
-                language,
-                module,
-                document,
-            });
+            let context = self.context_modules(self.sources.len());
+            let source = self.compile_source(language, source_name, input, &context)?;
+            self.sources.push(source);
             Ok(success(
                 json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
-                [("language", json!(language_as_str(language)))],
+                [
+                    ("language", json!(language_as_str(language))),
+                    ("recompiledSources", json!(1)),
+                ],
+            ))
+        })
+    }
+
+    /// Replace one already-added source in place, keeping the session — and
+    /// with it the loaded stdlib — alive.
+    ///
+    /// Sources compile in insertion order, each against the modules added
+    /// before it, so replacing entry `i` invalidates only `i` and whatever
+    /// follows it: earlier entries keep their compiled documents and the
+    /// stdlib is never reloaded. That is the whole point of the export —
+    /// editing one file of a workspace should not cost a stdlib load.
+    ///
+    /// An unknown `source_name` answers with an `unknown_source` error
+    /// rather than appending, so a host that has lost track of what the
+    /// session holds falls back to building a fresh one instead of silently
+    /// compiling a differently-ordered model.
+    #[wasm_bindgen(js_name = updateSource)]
+    pub fn update_source(&mut self, language: &str, source_name: &str, input: &str) -> JsValue {
+        json_response(|| {
+            let language = parse_language(language)?;
+            let index = self.source_index(source_name)?;
+            let context = self.context_modules(index);
+            let replacement = self.compile_source(language, source_name, input, &context)?;
+            let restore = self.snapshot_from(index);
+            self.sources[index] = replacement;
+            let recompiled = match self.recompile_from(index + 1) {
+                Ok(count) => 1 + count,
+                Err(error) => {
+                    // All or nothing: a source that no longer compiles against
+                    // the replacement must not leave the session half-updated,
+                    // or a host mirroring what it fed in would describe a model
+                    // the session does not hold.
+                    self.restore_from(index, restore);
+                    return Err(error);
+                }
+            };
+            Ok(success(
+                json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
+                [
+                    ("language", json!(language_as_str(language))),
+                    ("recompiledSources", json!(recompiled)),
+                ],
+            ))
+        })
+    }
+
+    /// Drop one source from the session, recompiling only what followed it.
+    #[wasm_bindgen(js_name = removeSource)]
+    pub fn remove_source(&mut self, source_name: &str) -> JsValue {
+        json_response(|| {
+            let index = self.source_index(source_name)?;
+            let restore = self.snapshot_from(index);
+            self.sources.remove(index);
+            let recompiled = match self.recompile_from(index) {
+                Ok(count) => count,
+                Err(error) => {
+                    self.restore_from(index, restore);
+                    return Err(error);
+                }
+            };
+            Ok(success(
+                json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
+                [("recompiledSources", json!(recompiled))],
             ))
         })
     }
@@ -922,6 +966,85 @@ impl MercurioSession {
 }
 
 impl MercurioSession {
+    fn source_index(&self, source_name: &str) -> Result<usize, WasmError> {
+        self.sources
+            .iter()
+            .position(|source| source.source_name == source_name)
+            .ok_or_else(|| {
+                WasmError::new(
+                    "unknown_source",
+                    format!("session has no source named `{source_name}`"),
+                )
+            })
+    }
+
+    /// The modules a source held at `index` compiles against: every source
+    /// added before it, in order.
+    fn context_modules(&self, index: usize) -> Vec<SysmlModule> {
+        self.sources[..index]
+            .iter()
+            .map(|source| source.module.clone())
+            .collect()
+    }
+
+    fn compile_source(
+        &self,
+        language: SourceLanguage,
+        source_name: &str,
+        input: &str,
+        context: &[SysmlModule],
+    ) -> Result<SessionSource, WasmError> {
+        let module = match language {
+            SourceLanguage::Sysml => parse_sysml_recovering(input)?.module,
+            SourceLanguage::Kerml => parse_kerml(input)?,
+        };
+        let document = match language {
+            SourceLanguage::Sysml => {
+                compile_sysml_text_with_context_report(input, source_name, context, &self.stdlib)
+                    .document
+                    .ok_or_else(|| WasmError::new("compile", "SysML compilation failed"))?
+            }
+            SourceLanguage::Kerml => compile_kerml_text(input, source_name, &self.stdlib)?,
+        };
+        Ok(SessionSource {
+            source_name: source_name.to_string(),
+            language,
+            input: input.to_string(),
+            module,
+            document,
+        })
+    }
+
+    /// The sources from `index` onward, kept so a failed recompile can put
+    /// the session back exactly as it was. Only what a change can actually
+    /// disturb is copied -- replacing the last source copies nothing.
+    fn snapshot_from(&self, index: usize) -> Vec<SessionSource> {
+        self.sources[index..].to_vec()
+    }
+
+    fn restore_from(&mut self, index: usize, snapshot: Vec<SessionSource>) {
+        self.sources.truncate(index);
+        self.sources.extend(snapshot);
+    }
+
+    /// Recompile every source from `index` onward against the sources that
+    /// now precede it, and report how many were recompiled. Sources before
+    /// `index` — and the stdlib — are left untouched.
+    fn recompile_from(&mut self, index: usize) -> Result<usize, WasmError> {
+        let mut recompiled = 0;
+        for position in index..self.sources.len() {
+            let context = self.context_modules(position);
+            let source = &self.sources[position];
+            let language = source.language;
+            let source_name = source.source_name.clone();
+            let input = source.input.clone();
+            let compiled = self.compile_source(language, &source_name, &input, &context)?;
+            self.sources[position] = compiled;
+            recompiled += 1;
+        }
+        Ok(recompiled)
+    }
+
     fn merged_document(&self) -> Result<KirDocument, WasmError> {
         let mut elements = self.stdlib.elements.clone();
         for source in &self.sources {
@@ -955,9 +1078,14 @@ impl MercurioSession {
     }
 }
 
+#[derive(Clone)]
 struct SessionSource {
     source_name: String,
     language: SourceLanguage,
+    /// The text this entry was compiled from, kept so replacing or removing
+    /// an earlier source can recompile the ones that followed it without the
+    /// host having to re-supply their content.
+    input: String,
     module: SysmlModule,
     document: KirDocument,
 }
@@ -1759,9 +1887,157 @@ mod tests {
         session.sources.push(SessionSource {
             source_name: "demo.sysml".to_string(),
             language: SourceLanguage::Sysml,
+            input: "package Demo { }".to_string(),
             module,
             document,
         });
         assert!(session.merged_document().unwrap().elements.len() > session.stdlib.elements.len());
+    }
+
+    /// The session helpers behind `updateSource` / `removeSource`. The
+    /// wasm-bindgen exports themselves return `JsValue` and so cannot run off
+    /// a wasm target; these cover the actual behaviour they wrap.
+    fn seeded_session(sources: &[(&str, &str)]) -> MercurioSession {
+        let stdlib = load_stdlib(None).unwrap();
+        let mut session = MercurioSession {
+            stdlib,
+            sources: Vec::new(),
+        };
+        for (name, text) in sources {
+            let context = session.context_modules(session.sources.len());
+            let compiled = session
+                .compile_source(SourceLanguage::Sysml, name, text, &context)
+                .unwrap();
+            session.sources.push(compiled);
+        }
+        session
+    }
+
+    fn element_names(session: &MercurioSession) -> Vec<String> {
+        session
+            .sources
+            .iter()
+            .flat_map(|source| source.document.elements.iter())
+            .map(|element| element.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn replacing_a_source_swaps_its_elements_and_keeps_the_others() {
+        let mut session = seeded_session(&[
+            ("one.sysml", "package One { part def Alpha; }"),
+            ("two.sysml", "package Two { part def Beta; }"),
+        ]);
+        let untouched = session.sources[1].document.elements.len();
+
+        let index = session.source_index("one.sysml").unwrap();
+        let context = session.context_modules(index);
+        let replacement = session
+            .compile_source(
+                SourceLanguage::Sysml,
+                "one.sysml",
+                "package One { part def Gamma; }",
+                &context,
+            )
+            .unwrap();
+        session.sources[index] = replacement;
+        // Only the replaced entry and what follows it recompile.
+        assert_eq!(session.recompile_from(index + 1).unwrap(), 1);
+
+        let names = element_names(&session);
+        assert!(names.iter().any(|name| name.ends_with("Gamma")));
+        assert!(!names.iter().any(|name| name.ends_with("Alpha")));
+        assert!(names.iter().any(|name| name.ends_with("Beta")));
+        assert_eq!(session.sources.len(), 2);
+        assert_eq!(session.sources[1].document.elements.len(), untouched);
+        assert!(session.merged_document().is_ok());
+    }
+
+    #[test]
+    fn a_replaced_source_is_visible_to_the_sources_that_follow_it() {
+        let mut session = seeded_session(&[
+            ("base.sysml", "package Base { part def Chassis; }"),
+            (
+                "derived.sysml",
+                "package Derived { import Base::*; part def Frame :> Chassis; }",
+            ),
+        ]);
+
+        // Rename the supertype in the base file; the dependent file must be
+        // recompiled against it, not left resolving the old name.
+        let index = session.source_index("base.sysml").unwrap();
+        let context = session.context_modules(index);
+        session.sources[index] = session
+            .compile_source(
+                SourceLanguage::Sysml,
+                "base.sysml",
+                "package Base { part def Chassis; part def Axle; }",
+                &context,
+            )
+            .unwrap();
+        assert_eq!(session.recompile_from(index + 1).unwrap(), 1);
+
+        let names = element_names(&session);
+        assert!(names.iter().any(|name| name.ends_with("Axle")));
+        assert!(names.iter().any(|name| name.ends_with("Frame")));
+        assert!(session.merged_document().is_ok());
+    }
+
+    #[test]
+    fn removing_a_source_drops_it_and_recompiles_the_tail() {
+        let mut session = seeded_session(&[
+            ("one.sysml", "package One { part def Alpha; }"),
+            ("two.sysml", "package Two { part def Beta; }"),
+            ("three.sysml", "package Three { part def Delta; }"),
+        ]);
+
+        let index = session.source_index("two.sysml").unwrap();
+        session.sources.remove(index);
+        assert_eq!(session.recompile_from(index).unwrap(), 1);
+
+        let names = element_names(&session);
+        assert!(!names.iter().any(|name| name.ends_with("Beta")));
+        assert!(names.iter().any(|name| name.ends_with("Alpha")));
+        assert!(names.iter().any(|name| name.ends_with("Delta")));
+        assert_eq!(session.sources.len(), 2);
+    }
+
+    #[test]
+    fn a_failed_tail_recompile_leaves_the_session_exactly_as_it_was() {
+        let mut session = seeded_session(&[
+            ("base.sysml", "package Base { part def Chassis; }"),
+            (
+                "derived.sysml",
+                "package Derived { import Base::*; part def Frame :> Chassis; }",
+            ),
+        ]);
+        let before = element_names(&session);
+        let index = session.source_index("base.sysml").unwrap();
+        let context = session.context_modules(index);
+
+        // Applying a replacement mutates the entry AND recompiles the tail;
+        // rolling back has to undo both, or `updateSource` would leave a
+        // half-updated session behind when the tail stops compiling.
+        let restore = session.snapshot_from(index);
+        session.sources[index] = session
+            .compile_source(
+                SourceLanguage::Sysml,
+                "base.sysml",
+                "package Base { part def Hull; }",
+                &context,
+            )
+            .unwrap();
+        session.recompile_from(index + 1).unwrap();
+        assert!(element_names(&session).iter().any(|name| name.ends_with("Hull")));
+        session.restore_from(index, restore);
+        assert_eq!(element_names(&session), before);
+    }
+
+    #[test]
+    fn an_unknown_source_name_is_an_error_not_an_append() {
+        let session = seeded_session(&[("one.sysml", "package One { }")]);
+        let error = session.source_index("missing.sysml").unwrap_err();
+        assert_eq!(error.code, "unknown_source");
+        assert_eq!(session.sources.len(), 1);
     }
 }
