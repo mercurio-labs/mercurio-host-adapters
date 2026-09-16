@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
 const DEFAULT_STDLIB: &str = include_str!(
-    "../../../../mercurio-sysml/resources/metamodels/sysml-2.0-metamodel-0.57.0/stdlib/stdlib.kir.json"
+    "../../../../mercurio-sysml/crates/mercurio-sysml/resources/metamodels/sysml-2.0-metamodel-0.57.0/stdlib/stdlib.kir.json"
 );
 
 #[wasm_bindgen(start)]
