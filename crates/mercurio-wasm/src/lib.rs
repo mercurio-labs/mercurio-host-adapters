@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use mercurio_core::frontend::ast::{Declaration, GenericUsageDecl, SourceSpan};
 use mercurio_core::{
@@ -538,6 +540,7 @@ pub fn wasm_parse_sysml_snippet(input: &str, request: JsValue) -> JsValue {
 pub struct MercurioSession {
     stdlib: KirDocument,
     sources: Vec<SessionSource>,
+    runtime_cache: RefCell<Option<Rc<Runtime>>>,
 }
 
 #[wasm_bindgen(js_class = MercurioSession)]
@@ -549,6 +552,7 @@ impl MercurioSession {
         Ok(Self {
             stdlib,
             sources: Vec::new(),
+            runtime_cache: RefCell::new(None),
         })
     }
 
@@ -559,6 +563,7 @@ impl MercurioSession {
             let context = self.context_modules(self.sources.len());
             let source = self.compile_source(language, source_name, input, &context)?;
             self.sources.push(source);
+            self.invalidate_runtime();
             Ok(success(
                 json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
                 [
@@ -602,6 +607,7 @@ impl MercurioSession {
                     return Err(error);
                 }
             };
+            self.invalidate_runtime();
             Ok(success(
                 json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
                 [
@@ -626,6 +632,7 @@ impl MercurioSession {
                     return Err(error);
                 }
             };
+            self.invalidate_runtime();
             Ok(success(
                 json!({ "sourceName": source_name, "sourceCount": self.sources.len() }),
                 [("recompiledSources", json!(recompiled))],
@@ -636,6 +643,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = clear)]
     pub fn clear(&mut self) {
         self.sources.clear();
+        self.invalidate_runtime();
     }
 
     #[wasm_bindgen(js_name = document)]
@@ -691,7 +699,7 @@ impl MercurioSession {
     pub fn query_runtime(&self, query: JsValue) -> JsValue {
         json_response(|| {
             let query: RuntimeQuery = from_js(query)?;
-            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let runtime = self.runtime()?;
             Ok(success(run_runtime_query(&runtime, query)?, []))
         })
     }
@@ -713,7 +721,7 @@ impl MercurioSession {
     pub fn list_state_machines(&self) -> JsValue {
         json_response(|| {
             self.ensure_executable_sources()?;
-            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let runtime = self.runtime()?;
             let machines = project_state_machines(&runtime);
             let items = machines
                 .iter()
@@ -815,7 +823,7 @@ impl MercurioSession {
         json_response(|| {
             self.ensure_executable_sources()?;
             let req: WasmSimulationRequest = from_js(request)?;
-            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let runtime = self.runtime()?;
 
             // Convert "subject|feature" string keys to (String, String) tuples.
             let values = req
@@ -878,7 +886,7 @@ impl MercurioSession {
         json_response(|| {
             self.ensure_executable_sources()?;
             let req: WasmConcurrentSimulationRequest = from_js(request)?;
-            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let runtime = self.runtime()?;
             let subject_count = req.subjects.len();
 
             let initial_values = req
@@ -944,7 +952,7 @@ impl MercurioSession {
     pub fn run_analysis_case(&self, analysis_case_id: String) -> JsValue {
         json_response(|| {
             self.ensure_executable_sources()?;
-            let runtime = Runtime::from_document(self.merged_document()?)?;
+            let runtime = self.runtime()?;
             let run_id = format!("wasm.analysis_case.{analysis_case_id}");
             let report = run_analysis_case(&runtime, &analysis_case_id, &run_id)
                 .map_err(|error| WasmError::new("simulation", error.to_string()))?;
@@ -974,6 +982,21 @@ impl MercurioSession {
 }
 
 impl MercurioSession {
+    // Successful source commits invalidate the runtime; rejected edits preserve it.
+    // Rc shares immutable model state only. Each execution still builds a fresh trace.
+    fn invalidate_runtime(&mut self) {
+        *self.runtime_cache.get_mut() = None;
+    }
+
+    fn runtime(&self) -> Result<Rc<Runtime>, WasmError> {
+        if let Some(runtime) = self.runtime_cache.borrow().as_ref() {
+            return Ok(Rc::clone(runtime));
+        }
+        let runtime = Rc::new(Runtime::from_document(self.merged_document()?)?);
+        *self.runtime_cache.borrow_mut() = Some(Rc::clone(&runtime));
+        Ok(runtime)
+    }
+
     fn source_index(&self, source_name: &str) -> Result<usize, WasmError> {
         self.sources
             .iter()
@@ -1909,6 +1932,7 @@ mod tests {
         let mut session = MercurioSession {
             stdlib,
             sources: Vec::new(),
+            runtime_cache: RefCell::new(None),
         };
 
         session.sources.push(SessionSource {
@@ -1931,6 +1955,7 @@ mod tests {
         let mut session = MercurioSession {
             stdlib,
             sources: Vec::new(),
+            runtime_cache: RefCell::new(None),
         };
         for (name, text) in sources {
             let context = session.context_modules(session.sources.len());
@@ -1940,6 +1965,20 @@ mod tests {
             session.sources.push(compiled);
         }
         session
+    }
+
+    #[test]
+    fn session_reuses_runtime_until_sources_are_cleared() {
+        let mut session = seeded_session(&[("model.sysml", "package Demo { part def Old; }")]);
+        let before = session.runtime().unwrap();
+        assert!(Rc::ptr_eq(&before, &session.runtime().unwrap()));
+        assert!(session.source_index("missing.sysml").is_err());
+        assert!(Rc::ptr_eq(&before, &session.runtime().unwrap()));
+        session.clear();
+        let after = session.runtime().unwrap();
+        assert!(!Rc::ptr_eq(&before, &after));
+        assert!(Rc::ptr_eq(&after, &session.runtime().unwrap()));
+        assert!(after.graph().elements().len() < before.graph().elements().len());
     }
 
     #[test]
