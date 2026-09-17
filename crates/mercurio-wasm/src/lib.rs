@@ -11,7 +11,7 @@ use mercurio_lsp::LanguageServer;
 use mercurio_lsp_host::create_language_server;
 use mercurio_simulation::{
     ConcurrentSimulationScenario, ConcurrentSubjectScenario, SimulationStatus,
-    StateMachineScenarioEvent, list_analysis_cases, run_analysis_case, run_concurrent_simulation,
+    StateMachineScenarioEvent, list_analysis_cases_from_graph, run_analysis_case, run_concurrent_simulation,
 };
 use mercurio_sysml::{
     Diagnostic, SYSML_JSON_IMPORTER_VERSION, SemanticCompileStatus, SourceLanguage,
@@ -712,6 +712,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = listStateMachines)]
     pub fn list_state_machines(&self) -> JsValue {
         json_response(|| {
+            self.ensure_executable_sources()?;
             let runtime = Runtime::from_document(self.merged_document()?)?;
             let machines = project_state_machines(&runtime);
             let items = machines
@@ -758,6 +759,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = listSimulationSubjects)]
     pub fn list_simulation_subjects(&self) -> JsValue {
         json_response(|| {
+            self.ensure_executable_sources()?;
             let doc = self.merged_document()?;
             // Prefer explicitly-individual elements; fall back to any named feature with a type.
             let mut items: Vec<Value> = doc
@@ -788,8 +790,9 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = listAnalysisCases)]
     pub fn list_analysis_cases(&self) -> JsValue {
         json_response(|| {
-            let runtime = Runtime::from_document(self.merged_document()?)?;
-            let items = list_analysis_cases(&runtime);
+            self.ensure_executable_sources()?;
+            let graph = self.graph()?;
+            let items = list_analysis_cases_from_graph(&graph);
             Ok(success(serde_json::to_value(items)?, []))
         })
     }
@@ -810,6 +813,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = runSimulation)]
     pub fn run_simulation(&self, request: JsValue) -> JsValue {
         json_response(|| {
+            self.ensure_executable_sources()?;
             let req: WasmSimulationRequest = from_js(request)?;
             let runtime = Runtime::from_document(self.merged_document()?)?;
 
@@ -872,6 +876,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = runConcurrentSimulation)]
     pub fn run_concurrent_simulation(&self, request: JsValue) -> JsValue {
         json_response(|| {
+            self.ensure_executable_sources()?;
             let req: WasmConcurrentSimulationRequest = from_js(request)?;
             let runtime = Runtime::from_document(self.merged_document()?)?;
             let subject_count = req.subjects.len();
@@ -938,6 +943,7 @@ impl MercurioSession {
     #[wasm_bindgen(js_name = runAnalysisCase)]
     pub fn run_analysis_case(&self, analysis_case_id: String) -> JsValue {
         json_response(|| {
+            self.ensure_executable_sources()?;
             let runtime = Runtime::from_document(self.merged_document()?)?;
             let run_id = format!("wasm.analysis_case.{analysis_case_id}");
             let report = run_analysis_case(&runtime, &analysis_case_id, &run_id)
@@ -1000,13 +1006,15 @@ impl MercurioSession {
             SourceLanguage::Sysml => parse_sysml_recovering(input)?.module,
             SourceLanguage::Kerml => parse_kerml(input)?,
         };
-        let document = match language {
+        let (document, compilation_complete, diagnostics) = match language {
             SourceLanguage::Sysml => {
-                compile_sysml_text_with_context_report(input, source_name, context, &self.stdlib)
-                    .document
-                    .ok_or_else(|| WasmError::new("compile", "SysML compilation failed"))?
+                let report = compile_sysml_text_with_context_report(input, source_name, context, &self.stdlib);
+                let complete = matches!(report.status, SemanticCompileStatus::Ok);
+                let document = report.document
+                    .ok_or_else(|| WasmError::new("compile", "SysML compilation failed"))?;
+                (document, complete, report.diagnostics)
             }
-            SourceLanguage::Kerml => compile_kerml_text(input, source_name, &self.stdlib)?,
+            SourceLanguage::Kerml => (compile_kerml_text(input, source_name, &self.stdlib)?, true, Vec::new()),
         };
         Ok(SessionSource {
             source_name: source_name.to_string(),
@@ -1014,6 +1022,8 @@ impl MercurioSession {
             input: input.to_string(),
             module,
             document,
+            compilation_complete,
+            diagnostics,
         })
     }
 
@@ -1047,6 +1057,17 @@ impl MercurioSession {
         Ok(recompiled)
     }
 
+    /// Partial documents remain available for editing, but must never be executed.
+    fn ensure_executable_sources(&self) -> Result<(), WasmError> {
+        if let Some(source) = self.sources.iter().find(|source| !source.compilation_complete) {
+            let diagnostics = source.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ");
+            return Err(WasmError::new("incomplete_compilation", format!(
+                "Cannot simulate partially compiled source '{}': {}", source.source_name, diagnostics
+            )));
+        }
+        Ok(())
+    }
+
     fn merged_document(&self) -> Result<KirDocument, WasmError> {
         let mut elements = self.stdlib.elements.clone();
         for source in &self.sources {
@@ -1064,6 +1085,8 @@ impl MercurioSession {
                                 "sourceName": source.source_name,
                                 "language": language_as_str(source.language),
                                 "elementCount": source.document.elements.len(),
+                                "compilationStatus": if source.compilation_complete { "ok" } else { "partial" },
+                                "diagnostics": source.diagnostics,
                             }))
                             .collect::<Vec<_>>()
                     ),
@@ -1090,6 +1113,8 @@ struct SessionSource {
     input: String,
     module: SysmlModule,
     document: KirDocument,
+    compilation_complete: bool,
+    diagnostics: Vec<Diagnostic>,
 }
 
 /// JSON-friendly simulation request (initial_values keyed as "subject|feature").
@@ -1892,6 +1917,8 @@ mod tests {
             input: "package Demo { }".to_string(),
             module,
             document,
+            compilation_complete: true,
+            diagnostics: Vec::new(),
         });
         assert!(session.merged_document().unwrap().elements.len() > session.stdlib.elements.len());
     }
@@ -1913,6 +1940,21 @@ mod tests {
             session.sources.push(compiled);
         }
         session
+    }
+
+    #[test]
+    fn partial_thermal_source_cannot_silently_become_an_empty_analysis_list() {
+        let thermal = include_str!("../../../../mercurio-sysml/crates/mercurio-sysml/src/simulation/thermal-deadline.sysml");
+        let mut session = seeded_session(&[("thermal.sysml", thermal)]);
+        assert!(!session.sources[0].compilation_complete);
+        assert!(!session.sources[0].diagnostics.is_empty());
+        assert!(session.merged_document().is_ok(), "Partial source stays available for editing");
+        let error = session.ensure_executable_sources().unwrap_err();
+        assert_eq!(error.code, "incomplete_compilation");
+        assert!(error.message.contains("thermal.sysml"));
+        let replacement = session.compile_source(SourceLanguage::Sysml, "thermal.sysml", "package Repaired { part def Chamber; }", &[]).unwrap();
+        session.sources[0] = replacement;
+        assert!(session.ensure_executable_sources().is_ok(), "Repair clears the execution gate");
     }
 
     fn element_names(session: &MercurioSession) -> Vec<String> {
