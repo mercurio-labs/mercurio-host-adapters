@@ -1833,7 +1833,8 @@ fn to_js<T>(value: &T) -> JsValue
 where
     T: Serialize,
 {
-    serde_wasm_bindgen::to_value(value).unwrap_or_else(|err| {
+    // Preserve JSON nulls when callers export reports with JSON.stringify.
+    value.serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true)).unwrap_or_else(|err| {
         JsValue::from_str(&format!("failed to serialize wasm response: {err}"))
     })
 }
