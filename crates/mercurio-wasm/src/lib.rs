@@ -833,6 +833,7 @@ impl MercurioSession {
                 .collect();
 
             let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "wasm.simulation".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: req.subject_id,
@@ -903,6 +904,7 @@ impl MercurioSession {
                 .collect();
 
             let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "wasm.concurrent".to_string(),
                 subjects,
                 max_steps: req.max_steps.unwrap_or(300),
