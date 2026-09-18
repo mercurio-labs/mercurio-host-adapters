@@ -570,13 +570,13 @@ impl MercurioSession {
         })
     }
 
-    /// Replace one already-added source in place, keeping the session â€” and
-    /// with it the loaded stdlib â€” alive.
+    /// Replace one already-added source in place, keeping the session — and
+    /// with it the loaded stdlib — alive.
     ///
     /// Sources compile in insertion order, each against the modules added
     /// before it, so replacing entry `i` invalidates only `i` and whatever
     /// follows it: earlier entries keep their compiled documents and the
-    /// stdlib is never reloaded. That is the whole point of the export â€”
+    /// stdlib is never reloaded. That is the whole point of the export —
     /// editing one file of a workspace should not cost a stdlib load.
     ///
     /// An unknown `source_name` answers with an `unknown_source` error
@@ -758,7 +758,7 @@ impl MercurioSession {
         })
     }
 
-    /// Return candidate simulation subjects â€” elements that carry behaviour
+    /// Return candidate simulation subjects — elements that carry behaviour
     /// (IndividualUsage / IndividualDefinition, or any typed feature).
     #[wasm_bindgen(js_name = listSimulationSubjects)]
     pub fn list_simulation_subjects(&self) -> JsValue {
@@ -1060,7 +1060,7 @@ impl MercurioSession {
 
     /// Recompile every source from `index` onward against the sources that
     /// now precede it, and report how many were recompiled. Sources before
-    /// `index` â€” and the stdlib â€” are left untouched.
+    /// `index` — and the stdlib — are left untouched.
     fn recompile_from(&mut self, index: usize) -> Result<usize, WasmError> {
         let mut recompiled = 0;
         for position in index..self.sources.len() {
