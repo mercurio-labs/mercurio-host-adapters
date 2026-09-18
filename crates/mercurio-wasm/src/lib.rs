@@ -29,10 +29,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
-const DEFAULT_STDLIB: &str = include_str!(
-    "../../../../mercurio-sysml/resources/metamodels/sysml-2.0-metamodel-0.57.0/stdlib/stdlib.kir.json"
-);
-
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
@@ -789,6 +785,7 @@ impl MercurioSession {
                 .collect();
 
             let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "wasm.simulation".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: req.subject_id,
@@ -859,6 +856,7 @@ impl MercurioSession {
                 .collect();
 
             let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "wasm.concurrent".to_string(),
                 subjects,
                 max_steps: req.max_steps.unwrap_or(300),
@@ -1231,7 +1229,7 @@ fn load_stdlib(stdlib: Option<KirDocument>) -> Result<KirDocument, WasmError> {
             document.validate()?;
             Ok(document)
         }
-        None => KirDocument::from_str(DEFAULT_STDLIB).map_err(Into::into),
+        None => mercurio_sysml::load_sysml_baseline().map_err(Into::into),
     }
 }
 
