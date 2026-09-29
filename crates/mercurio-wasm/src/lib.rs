@@ -13,8 +13,18 @@ use mercurio_lsp::LanguageServer;
 use mercurio_lsp_host::create_language_server;
 use mercurio_simulation::{
     ConcurrentSimulationScenario, ConcurrentSubjectScenario, SimulationStatus,
-    StateMachineScenarioEvent, list_analysis_cases_from_graph, run_analysis_case, run_concurrent_simulation,
+    StateMachineScenarioEvent, list_analysis_cases_from_graph, run_analysis_case,
+    run_concurrent_simulation,
 };
+use mercurio_sysml::simulation::constraint_network::{
+    SourceNetworkSolveRequest, list_constraint_networks, project_constraint_network,
+    solve_source_constraint_network,
+};
+use mercurio_sysml::simulation::session::{
+    AnalysisExperimentRequest, AnalysisSimulationSession, AnalysisSimulationSnapshot,
+    SimulationInputOverride, run_analysis_experiment,
+};
+use mercurio_sysml::simulation::{SimulationError, SimulationEvent};
 use mercurio_sysml::{
     Diagnostic, SYSML_JSON_IMPORTER_VERSION, SemanticCompileStatus, SourceLanguage,
     SysmlJsonImportError, SysmlJsonImportOptions, SysmlJsonImportReport, SysmlModule,
@@ -537,6 +547,7 @@ pub struct MercurioSession {
     stdlib: KirDocument,
     sources: Vec<SessionSource>,
     runtime_cache: RefCell<Option<Rc<Runtime>>>,
+    simulation: RefCell<Option<AnalysisSimulationSession>>,
 }
 
 #[wasm_bindgen(js_class = MercurioSession)]
@@ -549,6 +560,7 @@ impl MercurioSession {
             stdlib,
             sources: Vec::new(),
             runtime_cache: RefCell::new(None),
+            simulation: RefCell::new(None),
         })
     }
 
@@ -943,6 +955,100 @@ impl MercurioSession {
         })
     }
 
+    /// Initialize owned simulation state without advancing logical time.
+    /// Failed initialization preserves the previously initialized simulation.
+    #[wasm_bindgen(js_name = startSimulation)]
+    pub fn start_simulation(&self, analysis_case_id: String, overrides: JsValue) -> JsValue {
+        json_response(|| {
+            self.ensure_executable_sources()?;
+            let overrides: Vec<SimulationInputOverride> =
+                if overrides.is_null() || overrides.is_undefined() {
+                    Vec::new()
+                } else {
+                    from_js(overrides)?
+                };
+            let runtime = self.runtime()?;
+            let simulation =
+                AnalysisSimulationSession::start(&runtime, &analysis_case_id, &overrides)
+                    .map_err(simulation_error)?;
+            let snapshot = serde_json::to_value(simulation.snapshot().map_err(simulation_error)?)?;
+            *self.simulation.borrow_mut() = Some(simulation);
+            Ok(success(snapshot, []))
+        })
+    }
+
+    /// Execute 1 to 1000 shared-core scheduling cycles, preserving continuation state.
+    #[wasm_bindgen(js_name = advanceSimulation)]
+    pub fn advance_simulation(&self, cycles: usize) -> JsValue {
+        json_response(|| self.with_simulation(|simulation| simulation.advance(cycles)))
+    }
+
+    #[wasm_bindgen(js_name = snapshotSimulation)]
+    pub fn snapshot_simulation(&self) -> JsValue {
+        json_response(|| self.with_simulation(|simulation| simulation.snapshot()))
+    }
+
+    #[wasm_bindgen(js_name = injectSimulationEvent)]
+    pub fn inject_simulation_event(&self, subject_id: String, event: JsValue) -> JsValue {
+        json_response(|| {
+            let event: SimulationEvent = from_js(event)?;
+            self.with_simulation(|simulation| simulation.inject_event(&subject_id, event))
+        })
+    }
+
+    #[wasm_bindgen(js_name = cancelSimulation)]
+    pub fn cancel_simulation(&self) -> JsValue {
+        json_response(|| self.with_simulation(AnalysisSimulationSession::cancel))
+    }
+
+    #[wasm_bindgen(js_name = listConstraintNetworks)]
+    pub fn list_constraint_networks(&self) -> JsValue {
+        json_response(|| {
+            self.ensure_executable_sources()?;
+            let runtime = self.runtime()?;
+            let items = list_constraint_networks(&runtime)
+                .into_iter()
+                .map(|(id, label)| json!({ "id": id, "label": label }))
+                .collect::<Vec<_>>();
+            Ok(success(serde_json::to_value(items)?, []))
+        })
+    }
+
+    #[wasm_bindgen(js_name = projectConstraintNetwork)]
+    pub fn project_constraint_network(&self, scope_id: String) -> JsValue {
+        json_response(|| {
+            self.ensure_executable_sources()?;
+            let runtime = self.runtime()?;
+            let network =
+                project_constraint_network(&runtime, &scope_id).map_err(simulation_error)?;
+            Ok(success(serde_json::to_value(network)?, []))
+        })
+    }
+
+    #[wasm_bindgen(js_name = solveConstraintNetwork)]
+    pub fn solve_constraint_network(&self, request: JsValue) -> JsValue {
+        json_response(|| {
+            self.ensure_executable_sources()?;
+            let request: SourceNetworkSolveRequest = from_js(request)?;
+            let runtime = self.runtime()?;
+            let result =
+                solve_source_constraint_network(&runtime, request).map_err(simulation_error)?;
+            Ok(success(serde_json::to_value(result)?, []))
+        })
+    }
+
+    #[wasm_bindgen(js_name = runSimulationExperiment)]
+    pub fn run_simulation_experiment(&self, analysis_case_id: String, request: JsValue) -> JsValue {
+        json_response(|| {
+            self.ensure_executable_sources()?;
+            let request: AnalysisExperimentRequest = from_js(request)?;
+            let runtime = self.runtime()?;
+            let result = run_analysis_experiment(&runtime, &analysis_case_id, request)
+                .map_err(simulation_error)?;
+            Ok(success(serde_json::to_value(result)?, []))
+        })
+    }
+
     /// Run an authored AnalysisCaseDefinition by ID and return a capability report.
     #[wasm_bindgen(js_name = runAnalysisCase)]
     pub fn run_analysis_case(&self, analysis_case_id: String) -> JsValue {
@@ -979,9 +1085,27 @@ impl MercurioSession {
 
 impl MercurioSession {
     // Successful source commits invalidate the runtime; rejected edits preserve it.
-    // Rc shares immutable model state only. Each execution still builds a fresh trace.
+    // Rc shares immutable model state only. Simulations own their continuation state.
     fn invalidate_runtime(&mut self) {
         *self.runtime_cache.get_mut() = None;
+        *self.simulation.get_mut() = None;
+    }
+
+    fn with_simulation(
+        &self,
+        operation: impl FnOnce(
+            &mut AnalysisSimulationSession,
+        ) -> Result<AnalysisSimulationSnapshot, SimulationError>,
+    ) -> Result<Response, WasmError> {
+        let mut simulation = self.simulation.borrow_mut();
+        let simulation = simulation.as_mut().ok_or_else(|| {
+            WasmError::new(
+                "simulation_not_initialized",
+                "startSimulation must initialize a simulation for the current sources",
+            )
+        })?;
+        let snapshot = operation(simulation).map_err(simulation_error)?;
+        Ok(success(serde_json::to_value(snapshot)?, []))
     }
 
     fn runtime(&self) -> Result<Rc<Runtime>, WasmError> {
@@ -1027,13 +1151,23 @@ impl MercurioSession {
         };
         let (document, compilation_complete, diagnostics) = match language {
             SourceLanguage::Sysml => {
-                let report = compile_sysml_text_with_context_report(input, source_name, context, &self.stdlib);
+                let report = compile_sysml_text_with_context_report(
+                    input,
+                    source_name,
+                    context,
+                    &self.stdlib,
+                );
                 let complete = matches!(report.status, SemanticCompileStatus::Ok);
-                let document = report.document
+                let document = report
+                    .document
                     .ok_or_else(|| WasmError::new("compile", "SysML compilation failed"))?;
                 (document, complete, report.diagnostics)
             }
-            SourceLanguage::Kerml => (compile_kerml_text(input, source_name, &self.stdlib)?, true, Vec::new()),
+            SourceLanguage::Kerml => (
+                compile_kerml_text(input, source_name, &self.stdlib)?,
+                true,
+                Vec::new(),
+            ),
         };
         Ok(SessionSource {
             source_name: source_name.to_string(),
@@ -1078,11 +1212,24 @@ impl MercurioSession {
 
     /// Partial documents remain available for editing, but must never be executed.
     fn ensure_executable_sources(&self) -> Result<(), WasmError> {
-        if let Some(source) = self.sources.iter().find(|source| !source.compilation_complete) {
-            let diagnostics = source.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ");
-            return Err(WasmError::new("incomplete_compilation", format!(
-                "Cannot simulate partially compiled source '{}': {}", source.source_name, diagnostics
-            )));
+        if let Some(source) = self
+            .sources
+            .iter()
+            .find(|source| !source.compilation_complete)
+        {
+            let diagnostics = source
+                .diagnostics
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(WasmError::new(
+                "incomplete_compilation",
+                format!(
+                    "Cannot simulate partially compiled source '{}': {}",
+                    source.source_name, diagnostics
+                ),
+            ));
         }
         Ok(())
     }
@@ -1818,6 +1965,10 @@ fn required(value: Option<String>, field: &str) -> Result<String, WasmError> {
     value.ok_or_else(|| WasmError::new("query", format!("missing runtime query field: {field}")))
 }
 
+fn simulation_error(error: SimulationError) -> WasmError {
+    WasmError::new("simulation", error.to_string())
+}
+
 fn from_js<T>(value: JsValue) -> Result<T, WasmError>
 where
     T: serde::de::DeserializeOwned,
@@ -1830,9 +1981,11 @@ where
     T: Serialize,
 {
     // Preserve JSON nulls when callers export reports with JSON.stringify.
-    value.serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true)).unwrap_or_else(|err| {
-        JsValue::from_str(&format!("failed to serialize wasm response: {err}"))
-    })
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .unwrap_or_else(|err| {
+            JsValue::from_str(&format!("failed to serialize wasm response: {err}"))
+        })
 }
 
 fn json_response(action: impl FnOnce() -> Result<Response, WasmError>) -> JsValue {
@@ -1930,6 +2083,7 @@ mod tests {
             stdlib,
             sources: Vec::new(),
             runtime_cache: RefCell::new(None),
+            simulation: RefCell::new(None),
         };
 
         session.sources.push(SessionSource {
@@ -1953,6 +2107,7 @@ mod tests {
             stdlib,
             sources: Vec::new(),
             runtime_cache: RefCell::new(None),
+            simulation: RefCell::new(None),
         };
         for (name, text) in sources {
             let context = session.context_modules(session.sources.len());
@@ -1980,17 +2135,86 @@ mod tests {
 
     #[test]
     fn partial_thermal_source_cannot_silently_become_an_empty_analysis_list() {
-        let thermal = include_str!("../../../../mercurio-sysml/crates/mercurio-sysml/src/simulation/thermal-deadline.sysml");
+        let thermal = include_str!(
+            "../../../../mercurio-sysml/crates/mercurio-sysml/src/simulation/thermal-deadline.sysml"
+        );
         let mut session = seeded_session(&[("thermal.sysml", thermal)]);
         assert!(!session.sources[0].compilation_complete);
         assert!(!session.sources[0].diagnostics.is_empty());
-        assert!(session.merged_document().is_ok(), "Partial source stays available for editing");
+        assert!(
+            session.merged_document().is_ok(),
+            "Partial source stays available for editing"
+        );
         let error = session.ensure_executable_sources().unwrap_err();
         assert_eq!(error.code, "incomplete_compilation");
         assert!(error.message.contains("thermal.sysml"));
-        let replacement = session.compile_source(SourceLanguage::Sysml, "thermal.sysml", "package Repaired { part def Chamber; }", &[]).unwrap();
+        let replacement = session
+            .compile_source(
+                SourceLanguage::Sysml,
+                "thermal.sysml",
+                "package Repaired { part def Chamber; }",
+                &[],
+            )
+            .unwrap();
         session.sources[0] = replacement;
-        assert!(session.ensure_executable_sources().is_ok(), "Repair clears the execution gate");
+        assert!(
+            session.ensure_executable_sources().is_ok(),
+            "Repair clears the execution gate"
+        );
+    }
+
+    #[test]
+    fn simulation_session_requires_initialization_for_current_sources() {
+        let session = seeded_session(&[("model.sysml", "package Demo { part def Model; }")]);
+        let error = session
+            .with_simulation(|simulation| simulation.snapshot())
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "simulation_not_initialized");
+    }
+
+    #[test]
+    fn simulation_session_continues_until_successful_source_invalidation() {
+        let source = include_str!(
+            "../../../../mercurio-sysml/crates/mercurio-sysml/src/simulation/instrument-cooldown.sysml"
+        );
+        let mut session = seeded_session(&[("cooldown.sysml", source)]);
+        let runtime = session.runtime().unwrap();
+        let case = list_analysis_cases_from_graph(runtime.graph())
+            .into_iter()
+            .find(|case| case.label == "CooldownProfile")
+            .unwrap();
+        let simulation = AnalysisSimulationSession::start(&runtime, &case.id, &[]).unwrap();
+        *session.simulation.borrow_mut() = Some(simulation);
+        let initial = session
+            .with_simulation(|simulation| simulation.snapshot())
+            .unwrap()
+            .value
+            .unwrap();
+        assert_eq!(initial["logicalTimeS"], 0.0);
+        let advanced = session
+            .with_simulation(|simulation| simulation.advance(1))
+            .unwrap()
+            .value
+            .unwrap();
+        assert!(advanced["advanceCycles"].as_u64().unwrap() > 0);
+        assert!(session.source_index("missing.sysml").is_err());
+        let retained = session
+            .with_simulation(|simulation| simulation.snapshot())
+            .unwrap()
+            .value
+            .unwrap();
+        assert_eq!(advanced, retained);
+        session.clear();
+        assert!(session.simulation.borrow().is_none());
+        assert_eq!(
+            session
+                .with_simulation(|simulation| simulation.snapshot())
+                .err()
+                .unwrap()
+                .code,
+            "simulation_not_initialized"
+        );
     }
 
     fn element_names(session: &MercurioSession) -> Vec<String> {
@@ -2108,7 +2332,11 @@ mod tests {
             )
             .unwrap();
         session.recompile_from(index + 1).unwrap();
-        assert!(element_names(&session).iter().any(|name| name.ends_with("Hull")));
+        assert!(
+            element_names(&session)
+                .iter()
+                .any(|name| name.ends_with("Hull"))
+        );
         session.restore_from(index, restore);
         assert_eq!(element_names(&session), before);
     }
