@@ -1,2 +1,5 @@
 # Preserve the exact bytes of this compliance source checkpoint across platforms.
 * -text
+
+# CRLF is retained intentionally for source/evidence hashes.
+* whitespace=trailing-space,space-before-tab,cr-at-eol
